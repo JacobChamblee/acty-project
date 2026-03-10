@@ -15,6 +15,11 @@ except ImportError:
 
 # ── LSTM Autoencoder ────────────────────────────────────────────────────────
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+model = LSTMAutoencoder(input_size=input_size).to(device)
+tensor = torch.FloatTensor(sequences).to(device)
+
 class LSTMAutoencoder(nn.Module):
     def __init__(self, input_size: int, hidden_size: int = 32, num_layers: int = 1):
         super().__init__()
