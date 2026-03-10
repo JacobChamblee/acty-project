@@ -2,13 +2,7 @@
 
 **Your vehicle's data, owned by you.**
 
-Acty.ai is an automotive technology data platform powered by OBD-II hardware device and an AI-driven software suite. The device continuously logs diagnostic and performance data — including trouble codes, mileage, system readiness, and hybrid battery metrics, creating a tamper-evident operational history for the life of the vehicle.
-
-The companion software pairs directly with the device to do more than record. Using deep learning and predictive analytics, it continuously evaluates vehicle performance data to surface maintenance recommendations before problems develop. Identifying degradation patterns, flagging anomalies, and estimating service intervals based on how the vehicle is actually being driven, not just manufacturer schedules.
-
-All raw data remains encrypted and owner-controlled. Owners may optionally share verified insights to unlock better loan terms, more accurate trade-in valuations, or contribute anonymized data to manufacturers — on their terms, not the platform's. When it's time to sell, the software generates a verified diagnostic report revealing the vehicle's full history, including cleared codes and unresolved issues, giving buyers a transparent picture that the used-car market has never had.
-
-Acty.ai's goal is straightforward: give drivers the software intelligence to stay ahead of their vehicle's health, and full ownership of the data that makes it possible.
+Acty is an OBD-II hardware + software platform that permanently logs vehicle data, encrypts it on-device, and gives owners full control over what gets shared — and with whom. Unlike telematics systems that silently funnel your driving data to insurers or automakers, Acty puts you in the driver's seat.
 
 ---
 
@@ -47,6 +41,35 @@ acty-project/
 │   └── main.tsx
 ├── backend/                      # Python API & data processing
 └── index.html
+```
+
+---
+
+## Pipeline Architecture
+
+The backend pipeline maps to a layered analytics architecture, separating deterministic diagnostics from AI interpretation. Rules detect mechanical truths, ML detects unknown patterns, and the LLM only explains results.
+
+| File | Pipeline Layer |
+|---|---|
+| `backend/pipeline/ingest.py` | Layer 1 — Data Ingestion |
+| `backend/pipeline/signal.py` | Layer 2 — Signal Processing |
+| `backend/pipeline/features.py` | Layer 3 — Feature Engineering |
+| `backend/pipeline/rules.py` | Layer 4 — Rule-Based Diagnostics |
+| `backend/pipeline/trends.py` | Layer 5 — Trend Analysis |
+| `backend/pipeline/llm_report.py` | Layer 6 — Insight Generation (LLM) |
+
+```
+OBD Logger → Ingest → Signal Processing → Feature Engineering
+                                                    │
+                                      ┌─────────────┴─────────────┐
+                                 Rule Engine               ML Models
+                                      └─────────────┬─────────────┘
+                                                     │
+                                           Insight Aggregator
+                                                     │
+                                             LLM Report Generator
+                                                     │
+                                          Human-Readable Report
 ```
 
 ---
@@ -92,5 +115,3 @@ Acty's business model is built on hardware sales and verified reports — not da
 ---
 
 ## License
-
-MIT
