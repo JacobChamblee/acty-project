@@ -16,6 +16,14 @@ Acty is an OBD-II hardware + software platform that permanently logs vehicle dat
 
 ---
 
+## OBD Data Logging
+
+- **OBDLink MX+** - Best developer option
+- Bluetooth BLE + classic
+- Very high PID polling rate
+- Supports all OBD-II protocols
+- Good SDK documentation
+
 ## Tech Stack
 
 | Layer | Technology |
