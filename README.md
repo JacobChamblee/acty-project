@@ -2,7 +2,7 @@
 
 **Your vehicle's data, owned by you.**
 
-Acty is an OBD-II hardware + software platform that permanently logs vehicle data, encrypts it on-device, and gives owners full control over what gets shared — and with whom. Unlike telematics systems that silently funnel your driving data to insurers or automakers, Acty puts you in the driver's seat.
+Open-source OBD-II analytics platform using deep learning (LSTM, XGBoost, Isolation Forest) and LLM-powered reporting to turn raw vehicle telemetry into verifiable, owner-controlled health reports.
 
 ---
 
@@ -118,7 +118,7 @@ python main.py
 
 ## Philosophy
 
-Acty's business model is built on hardware sales and verified reports — not data brokering. We believe vehicle data is personal data, and personal data belongs to the person.
+Acty's  model is built on empowering drivers to control their data and verified reports, not data brokering. At its core, vehicle data is personal data, and personal data belongs to the person.
 
 ---
 
