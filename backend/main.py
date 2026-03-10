@@ -14,6 +14,14 @@ from pipeline.signal import process_signals
 from pipeline.features import compute_features
 from pipeline.rules import apply_diagnostic_rules
 from pipeline.trends import analyze_trends
+from pipeline.anomaly import detect_anomalies
+from pipeline.predictive import predict_maintenance
+
+anomaly_events    = detect_anomalies(df, features)
+predictive_events = predict_maintenance(db, vehicle_id, features)
+
+all_events = rule_events + anomaly_events + predictive_events
+
 from pipeline.llm_report import generate_report_stream, generate_report
 
 app = FastAPI(title="Acty - Vehicle Preventive Maintenance API")
