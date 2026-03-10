@@ -123,3 +123,5 @@ Acty's business model is built on hardware sales and verified reports — not da
 ---
 
 ## License
+
+Business Source License (BSL / BUSL)
