@@ -26,31 +26,19 @@ import pandas as pd
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
 from ml.pipeline.report import generate_diagnostic_report
 
-@app.post("/api/v1/report")
-async def diagnostic_report(payload: dict):
-    result = await generate_diagnostic_report(
-        dtc_codes=payload.get("dtc_codes", []),
-        anomalies=payload.get("anomalies", []),
-        vehicle_data=payload.get("vehicle_data", {}),
-        vehicle_id=payload.get("vehicle_id"),
-    )
-    return result
-
 # ── config ────────────────────────────────────────────────────────────────────
-# Point this at whatever directory your acty_obd_*.csv files land in
 CSV_DIR = Path(os.environ.get("ACTY_CSV_DIR", str(Path.home())))
 PORT    = 8765
-HOST    = os.environ.get("ACTY_HOST", "0.0.0.0")   # accept connections from LAN, not just localhost
+HOST    = os.environ.get("ACTY_HOST", "0.0.0.0")
 
 # ── thresholds for rule-based anomaly flags ───────────────────────────────────
 THRESHOLDS = {
     "COOLANT_TEMP":      {"warn": 100, "crit": 108,  "unit": "°C",  "label": "Coolant Temp"},
     "ENGINE_OIL_TEMP":   {"warn": 120, "crit": 135,  "unit": "°C",  "label": "Oil Temp"},
     "LONG_FUEL_TRIM_1":  {"warn": 8.0, "crit": 12.0, "unit": "%",   "label": "Long Fuel Trim B1", "abs": True},
-    "SHORT_FUEL_TRIM_1": {"warn": 10,  "crit": 20,   "unit": "%",   "label": "Short Fuel Trim B1","abs": True},
+    "SHORT_FUEL_TRIM_1": {"warn": 10,  "crit": 20,   "unit": "%",   "label": "Short Fuel Trim B1", "abs": True},
     "LONG_FUEL_TRIM_2":  {"warn": 8.0, "crit": 12.0, "unit": "%",   "label": "Long Fuel Trim B2", "abs": True},
     "INTAKE_TEMP":       {"warn": 50,  "crit": 65,   "unit": "°C",  "label": "Intake Air Temp"},
     "CONTROL_VOLTAGE":   {"warn": 13.8,"crit": 11.5, "unit": "V",   "label": "Battery Voltage", "low": True},
@@ -92,28 +80,28 @@ def detect_anomalies(df: pd.DataFrame) -> list[dict]:
         if series.empty:
             continue
 
-        recent = series.tail(30)   # focus on last 30 samples
-        val = recent.mean()
-        peak = recent.abs().max() if cfg.get("abs") else recent.max()
+        recent = series.tail(30)
+        val    = recent.mean()
+        peak   = recent.abs().max() if cfg.get("abs") else recent.max()
 
         if cfg.get("abs"):
             check_val = abs(val)
         elif cfg.get("low"):
-            check_val = -val   # low is bad, invert for threshold comparison
+            check_val = -val
             cfg = {**cfg, "warn": -cfg["warn"], "crit": -cfg["crit"]}
         else:
             check_val = val
 
         severity = None
         if cfg.get("low"):
-            if val <= abs(cfg["crit"]): severity = "critical"
+            if val <= abs(cfg["crit"]):  severity = "critical"
             elif val <= abs(cfg["warn"]): severity = "warning"
         else:
             if cfg.get("abs"):
-                if abs(val) >= cfg["crit"]: severity = "critical"
+                if abs(val) >= cfg["crit"]:  severity = "critical"
                 elif abs(val) >= cfg["warn"]: severity = "warning"
             else:
-                if val >= cfg["crit"]: severity = "critical"
+                if val >= cfg["crit"]:  severity = "critical"
                 elif val >= cfg["warn"]: severity = "warning"
 
         if severity:
@@ -131,10 +119,10 @@ def detect_anomalies(df: pd.DataFrame) -> list[dict]:
         try:
             from sklearn.ensemble import IsolationForest
             numeric_cols = [c for c in df.select_dtypes(include=[np.number]).columns
-                           if c not in ("elapsed_s",) and df[c].notna().sum() > 30]
+                            if c not in ("elapsed_s",) and df[c].notna().sum() > 30]
             if numeric_cols:
-                X = df[numeric_cols].fillna(df[numeric_cols].median())
-                clf = IsolationForest(contamination=0.05, random_state=42)
+                X      = df[numeric_cols].fillna(df[numeric_cols].median())
+                clf    = IsolationForest(contamination=0.05, random_state=42)
                 scores = clf.fit_predict(X)
                 n_anomalies = (scores == -1).sum()
                 if n_anomalies > 0:
@@ -210,9 +198,9 @@ def root():
 def health():
     csv = find_latest_csv()
     return {
-        "status":       "ok",
-        "csv_dir":      str(CSV_DIR),
-        "latest_csv":   csv.name if csv else None,
+        "status":        "ok",
+        "csv_dir":       str(CSV_DIR),
+        "latest_csv":    csv.name if csv else None,
         "session_count": len(find_all_csvs()),
     }
 
@@ -244,23 +232,38 @@ def insights(session: Optional[str] = None):
     tail = df.tail(60)
     for pid in sparkline_pids:
         if pid in tail.columns:
-            vals = tail[pid].fillna(method="ffill").fillna(0).round(2).tolist()
+            vals = tail[pid].ffill().fillna(0).round(2).tolist()
             sparklines[pid] = vals
 
     return {
-        "summary":    summary,
-        "alerts":     alerts,
-        "sparklines": sparklines,
-        "alert_count": len(alerts),
+        "summary":      summary,
+        "alerts":       alerts,
+        "sparklines":   sparklines,
+        "alert_count":  len(alerts),
         "health_score": _health_score(alerts),
     }
+
+# ── report endpoint ───────────────────────────────────────────────────────────
+@app.post("/api/v1/report")
+async def diagnostic_report(payload: dict):
+    """
+    Generate a RAG-grounded diagnostic report.
+    Expects: { dtc_codes, anomalies, vehicle_data, vehicle_id }
+    """
+    result = await generate_diagnostic_report(
+        dtc_codes=payload.get("dtc_codes", []),
+        anomalies=payload.get("anomalies", []),
+        vehicle_data=payload.get("vehicle_data", {}),
+        vehicle_id=payload.get("vehicle_id"),
+    )
+    return result
 
 @app.get("/sessions")
 def sessions():
     """List all available CSV sessions."""
-    csvs = find_all_csvs()
+    csvs   = find_all_csvs()
     result = []
-    for p in csvs[:20]:   # cap at 20 most recent
+    for p in csvs[:20]:
         try:
             df = load_csv(p)
             s  = summarize_session(df, p)

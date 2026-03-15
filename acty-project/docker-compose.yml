@@ -1,50 +1,132 @@
 version: "3.9"
-
-# Acty local development stack
-# Usage:
-#   docker compose up -d          # start API + postgres
-#   docker compose logs -f api    # tail API logs
+# Acty full-stack development environment
 #
-# Ollama runs natively on the 4U DIY (RTX 3060) — not in Docker.
-# Point OLLAMA_HOST at 192.168.68.138:11434
+# Usage:
+#   docker compose up -d              # start full stack
+#   docker compose up -d api postgres # start API + DB only
+#   docker compose logs -f api        # tail API logs
+#   docker compose down -v            # stop + remove volumes
+#
+# Notes:
+#   - Ollama runs natively on 4U DIY (RTX 3060, 192.168.68.138) — not in Docker
+#   - RAG server (rag_server.py) also runs natively on 4U via systemd (acty-rag.service)
+#   - ChromaDB data lives on 4U at /home/jacob/acty/rag/chroma_db
+#   - Copy .env.example → .env and fill in secrets before first run
 
 services:
+
+  # ── FastAPI backend ──────────────────────────────────────────────────────────
   api:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    container_name: acty-api
     ports:
       - "8765:8765"
     environment:
+      # Inference node (4U DIY)
       - OLLAMA_HOST=${OLLAMA_HOST:-http://192.168.68.138:11434}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://192.168.68.138:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
-      - ACTY_CSV_DIR=/data
+      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      - OLLAMA_FAST_MODEL=${OLLAMA_FAST_MODEL:-phi4-mini}
+      # RAG server (4U DIY)
+      - RAG_BASE_URL=${RAG_BASE_URL:-http://192.168.68.138:8766}
+      # Database
       - DATABASE_URL=postgresql://acty:acty@postgres:5432/acty
+      # OBD data
+      - ACTY_HOST=0.0.0.0
+      - ACTY_PORT=8765
+      - ACTY_CSV_DIR=/data
+      # ML models
+      - ACTY_MODEL_DIR=/models
+      # Anthropic API (cloud fallback)
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # Privacy
+      - DP_EPSILON=${DP_EPSILON:-1.0}
+      - ZK_TOKEN_SEED=${ZK_TOKEN_SEED}
     volumes:
-      - ./data:/data
-      - ./backend:/app/backend
+      - ./data:/data                  # OBD CSV sessions
+      - ./backend:/app/backend        # live reload in dev
+      - model_cache:/models           # per-vehicle ML models
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - acty-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
+  # ── React / Vite frontend ────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: acty-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8765}
+    volumes:
+      - ./frontend:/app               # live reload in dev
+      - /app/node_modules             # preserve container node_modules
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - acty-net
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
+    container_name: acty-postgres
     environment:
-      POSTGRES_USER: acty
+      POSTGRES_USER:     acty
       POSTGRES_PASSWORD: acty
-      POSTGRES_DB: acty
+      POSTGRES_DB:       acty
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U acty"]
       interval: 5s
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    networks:
+      - acty-net
 
+  # ── pgAdmin (optional, dev only) ─────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: acty-pgadmin
+    profiles: ["debug"]               # only starts with: docker compose --profile debug up
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    admin@acty.local
+      PGADMIN_DEFAULT_PASSWORD: acty
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - acty-net
+
+# ── volumes ───────────────────────────────────────────────────────────────────
 volumes:
   pgdata:
+    driver: local
+  model_cache:
+    driver: local
+
+# ── networks ──────────────────────────────────────────────────────────────────
+networks:
+  acty-net:
+    driver: bridge
