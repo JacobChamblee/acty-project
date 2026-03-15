@@ -1,0 +1,50 @@
+version: "3.9"
+
+# Acty local development stack
+# Usage:
+#   docker compose up -d          # start API + postgres
+#   docker compose logs -f api    # tail API logs
+#
+# Ollama runs natively on the 4U DIY (RTX 3060) — not in Docker.
+# Point OLLAMA_HOST at 192.168.68.138:11434
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8765:8765"
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://192.168.68.138:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      - ACTY_CSV_DIR=/data
+      - DATABASE_URL=postgresql://acty:acty@postgres:5432/acty
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - ./data:/data
+      - ./backend:/app/backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: acty
+      POSTGRES_PASSWORD: acty
+      POSTGRES_DB: acty
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acty"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
