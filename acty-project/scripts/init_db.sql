@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS vehicles (
 CREATE TABLE IF NOT EXISTS sessions (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     vehicle_id      TEXT REFERENCES vehicles(vehicle_id) ON DELETE CASCADE,
-    filename        TEXT NOT NULL,
+    filename        TEXT NOT NULL UNIQUE,
     session_date    DATE,
     session_time    TIME,
     duration_min    NUMERIC(8,2),

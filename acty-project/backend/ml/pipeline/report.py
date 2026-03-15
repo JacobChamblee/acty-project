@@ -4,6 +4,7 @@ Consumes anomaly + predictive output, queries RAG server,
 generates final LLM report via Ollama.
 """
 
+import asyncio
 import os
 import httpx
 import ollama
@@ -83,10 +84,11 @@ Provide a structured diagnostic report with these exact sections:
 5. ESTIMATED REPAIR COMPLEXITY: [DIY / Shop / Dealer]"""
 
     # ── Stage 3: LLM generation ───────────────────────────────────────────────
-    client   = ollama.Client(host=OLLAMA_HOST)
-    response = client.chat(
+    client = ollama.Client(host=OLLAMA_HOST)
+    response = await asyncio.to_thread(
+        client.chat,
         model=OLLAMA_MODEL,
-        messages=[{"role": "user", "content": prompt}]
+        messages=[{"role": "user", "content": prompt}],
     )
     report_text = response["message"]["content"]
 

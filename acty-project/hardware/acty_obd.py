@@ -521,7 +521,7 @@ class ELM327:
         data_hex = hex_str[idx + len(prefix):] if idx >= 0 else hex_str
         if not data_hex: return None
         try:
-            return [int(data_hex[i:i+2], 16) for i in range(0, len(data_hex) - 1, 2)]
+            return [int(data_hex[i:i+2], 16) for i in range(0, len(data_hex), 2)]
         except ValueError:
             return None
 

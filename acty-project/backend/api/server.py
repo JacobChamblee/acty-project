@@ -4,23 +4,20 @@ server.py
 ---------
 FastAPI backend for the Acty mobile prototype.
 Reads OBD-II CSV files, runs lightweight anomaly detection,
-and serves structured insights to the Android app over local WiFi.
-
-Run:
-    pip install fastapi uvicorn pandas numpy scikit-learn --break-system-packages
-    python3 server.py
-
-Then on your phone (same WiFi):
-    http://192.168.68.142:8765/insights   ← replace with your machine's LAN IP
+persists results to PostgreSQL, and serves structured insights
+to the Android app over local WiFi.
 """
 
+import asyncio
 import glob
 import json
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import asyncpg
 import numpy as np
 import pandas as pd
 import uvicorn
@@ -29,9 +26,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from ml.pipeline.report import generate_diagnostic_report
 
 # ── config ────────────────────────────────────────────────────────────────────
-CSV_DIR = Path(os.environ.get("ACTY_CSV_DIR", str(Path.home())))
-PORT    = 8765
-HOST    = os.environ.get("ACTY_HOST", "0.0.0.0")
+CSV_DIR      = Path(os.environ.get("ACTY_CSV_DIR", str(Path.home())))
+PORT         = 8765
+HOST         = os.environ.get("ACTY_HOST", "0.0.0.0")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 # ── thresholds for rule-based anomaly flags ───────────────────────────────────
 THRESHOLDS = {
@@ -46,8 +44,26 @@ THRESHOLDS = {
     "RPM":               {"warn": 5000,"crit": 6000, "unit": "rpm", "label": "RPM"},
 }
 
+# ── database pool ─────────────────────────────────────────────────────────────
+_pool: Optional[asyncpg.Pool] = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _pool
+    if DATABASE_URL:
+        try:
+            _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+            print(f"[db] Connected to PostgreSQL")
+        except Exception as e:
+            print(f"[db] Could not connect to PostgreSQL: {e}")
+    yield
+    if _pool:
+        await _pool.close()
+
+
 # ── FastAPI app ───────────────────────────────────────────────────────────────
-app = FastAPI(title="Acty Mobile API", version="0.1.0")
+app = FastAPI(title="Acty Mobile API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -94,14 +110,14 @@ def detect_anomalies(df: pd.DataFrame) -> list[dict]:
 
         severity = None
         if cfg.get("low"):
-            if val <= abs(cfg["crit"]):  severity = "critical"
+            if val <= abs(cfg["crit"]):   severity = "critical"
             elif val <= abs(cfg["warn"]): severity = "warning"
         else:
             if cfg.get("abs"):
-                if abs(val) >= cfg["crit"]:  severity = "critical"
+                if abs(val) >= cfg["crit"]:   severity = "critical"
                 elif abs(val) >= cfg["warn"]: severity = "warning"
             else:
-                if val >= cfg["crit"]:  severity = "critical"
+                if val >= cfg["crit"]:   severity = "critical"
                 elif val >= cfg["warn"]: severity = "warning"
 
         if severity:
@@ -164,7 +180,6 @@ def summarize_session(df: pd.DataFrame, path: Path) -> dict:
         return round(float(df[col].dropna().max()), 2) if col in df.columns and df[col].notna().any() else None
 
     moving = df[df["SPEED"] > 2] if "SPEED" in df.columns else pd.DataFrame()
-    idle   = df[df["SPEED"] <= 2] if "SPEED" in df.columns else pd.DataFrame()
 
     return {
         "filename":        path.name,
@@ -188,6 +203,110 @@ def summarize_session(df: pd.DataFrame, path: Path) -> dict:
         "battery_v":       safe_mean("CONTROL_VOLTAGE"),
     }
 
+def _health_score(alerts: list[dict]) -> int:
+    """Simple 0-100 score. 100 = no alerts, deduct for warnings/criticals."""
+    score = 100
+    for a in alerts:
+        if a["severity"] == "critical": score -= 25
+        elif a["severity"] == "warning": score -= 10
+    return max(0, score)
+
+# ── database persistence ──────────────────────────────────────────────────────
+async def _persist_session(
+    summary: dict,
+    alerts: list[dict],
+    health_score: int,
+) -> None:
+    """Upsert session + alerts into PostgreSQL. Silently skips if DB unavailable."""
+    if not _pool:
+        return
+    try:
+        async with _pool.acquire() as conn:
+            # Ensure default vehicle row exists
+            await conn.execute(
+                """
+                INSERT INTO vehicles (vehicle_id, make, model, year, engine)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (vehicle_id) DO NOTHING
+                """,
+                "default", "Toyota", "GR86", 2023, "FA24",
+            )
+
+            # Check if session already persisted
+            existing_id = await conn.fetchval(
+                "SELECT id FROM sessions WHERE filename = $1",
+                summary["filename"],
+            )
+
+            if existing_id is None:
+                session_id = await conn.fetchval(
+                    """
+                    INSERT INTO sessions (
+                        vehicle_id, filename, session_date, session_time,
+                        duration_min, sample_count,
+                        avg_rpm, max_rpm, avg_speed_kmh, max_speed_kmh,
+                        avg_coolant_c, max_coolant_c, avg_engine_load,
+                        pct_time_moving, ltft_b1, stft_b1,
+                        avg_timing, avg_maf, fuel_level_pct, battery_v,
+                        health_score
+                    ) VALUES (
+                        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+                        $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
+                    ) RETURNING id
+                    """,
+                    "default",
+                    summary["filename"],
+                    summary["session_date"],
+                    summary["session_time"],
+                    summary["duration_min"],
+                    summary["sample_count"],
+                    summary["avg_rpm"],
+                    summary["max_rpm"],
+                    summary["avg_speed_kmh"],
+                    summary["max_speed_kmh"],
+                    summary["avg_coolant_c"],
+                    summary["max_coolant_c"],
+                    summary["avg_engine_load"],
+                    summary["pct_time_moving"],
+                    summary["ltft_b1"],
+                    summary["stft_b1"],
+                    summary["avg_timing"],
+                    summary["avg_maf"],
+                    summary["fuel_level_pct"],
+                    summary["battery_v"],
+                    health_score,
+                )
+            else:
+                # Update health score in case alerts changed
+                await conn.execute(
+                    "UPDATE sessions SET health_score = $1 WHERE id = $2",
+                    health_score, existing_id,
+                )
+                session_id = existing_id
+
+            if session_id and alerts:
+                await conn.execute(
+                    "DELETE FROM alerts WHERE session_id = $1", session_id
+                )
+                await conn.executemany(
+                    """
+                    INSERT INTO alerts
+                        (session_id, vehicle_id, pid, label, severity, value, unit, message)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    """,
+                    [
+                        (
+                            session_id, "default",
+                            a["pid"], a["label"], a["severity"],
+                            a["value"], a["unit"], a["message"],
+                        )
+                        for a in alerts
+                    ],
+                )
+    except Exception as e:
+        print(f"[db] persist_session failed: {e}")
+
+
 # ── routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -202,10 +321,11 @@ def health():
         "csv_dir":       str(CSV_DIR),
         "latest_csv":    csv.name if csv else None,
         "session_count": len(find_all_csvs()),
+        "db_connected":  _pool is not None,
     }
 
 @app.get("/insights")
-def insights(session: Optional[str] = None):
+async def insights(session: Optional[str] = None):
     """
     Main endpoint. Returns:
       - session summary stats
@@ -224,6 +344,7 @@ def insights(session: Optional[str] = None):
     df      = load_csv(path)
     summary = summarize_session(df, path)
     alerts  = detect_anomalies(df)
+    score   = _health_score(alerts)
 
     # Sparkline data — last 60 samples of key PIDs
     sparkline_pids = ["RPM", "SPEED", "COOLANT_TEMP", "ENGINE_LOAD",
@@ -235,12 +356,15 @@ def insights(session: Optional[str] = None):
             vals = tail[pid].ffill().fillna(0).round(2).tolist()
             sparklines[pid] = vals
 
+    # Persist to DB (fire-and-forget; never blocks the response)
+    asyncio.create_task(_persist_session(summary, alerts, score))
+
     return {
         "summary":      summary,
         "alerts":       alerts,
         "sparklines":   sparklines,
         "alert_count":  len(alerts),
-        "health_score": _health_score(alerts),
+        "health_score": score,
     }
 
 # ── report endpoint ───────────────────────────────────────────────────────────
@@ -259,7 +383,7 @@ async def diagnostic_report(payload: dict):
     return result
 
 @app.get("/sessions")
-def sessions():
+async def sessions():
     """List all available CSV sessions."""
     csvs   = find_all_csvs()
     result = []
@@ -273,17 +397,9 @@ def sessions():
     return {"sessions": result, "total": len(csvs)}
 
 @app.get("/sessions/{filename}")
-def session_detail(filename: str):
+async def session_detail(filename: str):
     """Full insights for a specific session by filename."""
-    return insights(session=filename)
-
-def _health_score(alerts: list[dict]) -> int:
-    """Simple 0-100 score. 100 = no alerts, deduct for warnings/criticals."""
-    score = 100
-    for a in alerts:
-        if a["severity"] == "critical": score -= 25
-        elif a["severity"] == "warning": score -= 10
-    return max(0, score)
+    return await insights(session=filename)
 
 # ── entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":

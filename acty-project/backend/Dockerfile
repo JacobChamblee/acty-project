@@ -1,11 +1,14 @@
 FROM python:3.12-slim
-
 WORKDIR /app
 
-# System deps for OCR
+# System deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr tesseract-ocr-eng \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Python path so 'from ml.pipeline.x import y' resolves correctly
+ENV PYTHONPATH=/app/backend
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

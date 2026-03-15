@@ -9,8 +9,8 @@ version: "3.9"
 #
 # Notes:
 #   - Ollama runs natively on 4U DIY (RTX 3060, 192.168.68.138) — not in Docker
-#   - RAG server (rag_server.py) also runs natively on 4U via systemd (acty-rag.service)
-#   - ChromaDB data lives on 4U at /home/jacob/acty/rag/chroma_db
+#   - RAG server also runs natively on 4U via systemd (acty-rag.service)
+#   - Expo mobile app runs natively on phone/emulator — not in Docker
 #   - Copy .env.example → .env and fill in secrets before first run
 
 services:
@@ -62,25 +62,6 @@ services:
       retries: 5
       start_period: 15s
 
-  # ── React / Vite frontend ────────────────────────────────────────────────────
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: acty-frontend
-    ports:
-      - "5173:5173"
-    environment:
-      - VITE_API_URL=${VITE_API_URL:-http://localhost:8765}
-    volumes:
-      - ./frontend:/app               # live reload in dev
-      - /app/node_modules             # preserve container node_modules
-    depends_on:
-      - api
-    restart: unless-stopped
-    networks:
-      - acty-net
-
   # ── PostgreSQL ───────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
@@ -103,11 +84,33 @@ services:
     networks:
       - acty-net
 
-  # ── pgAdmin (optional, dev only) ─────────────────────────────────────────────
+  # ── Grafana dashboard ────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: acty-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-acty}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_INSTALL_PLUGINS=grafana-postgresql-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - acty-net
+
+  # ── pgAdmin (optional, debug only) ───────────────────────────────────────────
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: acty-pgadmin
-    profiles: ["debug"]               # only starts with: docker compose --profile debug up
+    profiles: ["debug"]
     environment:
       PGADMIN_DEFAULT_EMAIL:    admin@acty.local
       PGADMIN_DEFAULT_PASSWORD: acty
@@ -122,6 +125,8 @@ services:
 # ── volumes ───────────────────────────────────────────────────────────────────
 volumes:
   pgdata:
+    driver: local
+  grafana_data:
     driver: local
   model_cache:
     driver: local

@@ -53,3 +53,8 @@ Thumbs.db
 *.pem
 *.crt
 secrets/
+
+# Build artifacts / packages
+*.deb
+*.rpm
+*.jar
