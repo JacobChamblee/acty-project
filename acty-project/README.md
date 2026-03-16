@@ -59,7 +59,7 @@ Acty is an OBD-II dongle + software platform that provides AI-powered vehicle di
 | R7525 | Future ML training | 2× EPYC 7262, 512GB RAM (TBD: 2× L40 48GB) |
 | R720 | Secondary services | Ingest Server |
 | CM3588 | Ed25519 signing & verfication | 8-core, 8GB RAM, Xubuntu |
-| TrueNAS DIY | Storage | - |
+| TrueNAS DIY | Storage | 1 x Intel Xeon E5 2680 V4, 32GB RAM, 24.65 TiB RAIDZ1 |
 
 ## Quick Start
 
