@@ -82,7 +82,7 @@ pip install -r requirements.txt --break-system-packages
 python3 backend/api/server.py
 ```
 
-### 3. OBD capture (ThinkPad)
+### 3. OBD capture (Laptop)
 ```bash
 python3 hardware/acty_obd_capture.py
 # Pairs with VeePeak OBDCheck BLE via RFCOMM
@@ -115,13 +115,15 @@ npx expo start --android
 ## Hardware Dongle Roadmap
 
 ```
-Phase 1: VeePeak BLE + ThinkPad (current — data collection)
+Phase 1: VeePeak BLE + Laptop (current — data collection)
 Phase 2: Raspberry Pi Zero 2W prototype
 Phase 3: ESP32-S3 devkit
 Phase 4: Custom KiCad PCB (ESP32-S3 + ATECC608B)
 ```
 
-## Vehicle: Toyota GR86 (FA24 engine)
+## Vehicle: Test Mule - Toyota GR86 (FA24 engine)
+
+**This is currently being tested on just the 2022-Present Toyota GR86/Subaru BRZ. This will be expanded to other manufactures and makes soon.
 
 The RAG pipeline is seeded with the GR86/BRZ factory service manual.
 `oil_level_estimator.py` uses FA24-specific defaults (5.7 qt capacity, 0.5 qt/1k mi baseline consumption).
