@@ -9,7 +9,7 @@ Acty is an OBD-II dongle + software platform that provides AI-powered vehicle di
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  HARDWARE LAYER                                                 │
-│  VeePeak OBDCheck BLE ──► acty_obd_capture.py (ThinkPad/Linux) │
+│  VeePeak OBDCheck BLE ──► acty_obd_capture.py (IoT/Laptop)      │
 │                                 │ CSV logs                      │
 └─────────────────────────────────┼───────────────────────────────┘
                                   │
@@ -25,7 +25,7 @@ Acty is an OBD-II dongle + software platform that provides AI-powered vehicle di
 │  maintenance_tracker.py  Brakes, tires, trans fluid, etc.       │
 │       │                                                         │
 │  [anomaly.py]     ← Isolation Forest + LSTM autoencoder         │
-│  [predictive.py]  ← XGBoost/RF per-vehicle models  (TODO)      │
+│  [predictive.py]  ← XGBoost/RF per-vehicle models  (TODO)       │
 │       │                                                         │
 └───────┼─────────────────────────────────────────────────────────┘
         │
@@ -35,10 +35,10 @@ Acty is an OBD-II dongle + software platform that provides AI-powered vehicle di
 │  01_parse_fsm.py   PDF → structured JSON (text/OCR/table)       │
 │  02_embed.py       ChromaDB vector store (BGE-large, GPU)       │
 │  03_query.py       Semantic retrieval + Ollama generation       │
-│  04_acty_bridge.py Fault → FSM context → LLM report            │
+│  04_acty_bridge.py Fault → FSM context → LLM report             │
 │                                                                 │
-│  Inference node: 4U DIY (RTX 3060 12GB) @ 192.168.68.138       │
-│  Models: llama3.1:8b, nomic-embed-text                         │
+│  Inference node: 4U DIY (RTX 3060 12GB) @ 192.168.68.138        │
+│  Models: llama3.1:8b, nomic-embed-text                          │
 └─────────────────────────────────────────────────────────────────┘
         │
 ┌───────▼─────────────────────────────────────────────────────────┐
