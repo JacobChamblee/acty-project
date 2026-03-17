@@ -552,11 +552,19 @@ class ELM327:
         return supported
 
     def get_dtcs(self) -> list:
-        resp = self._send("03", timeout=5.0)
+        """Mode 03 — confirmed stored DTCs (CEL is lit for these)."""
+        return self._parse_dtc_response(self._send("03", timeout=5.0), "43")
+
+    def get_pending_dtcs(self) -> list:
+        """Mode 07 — pending DTCs (detected but not yet confirmed / no CEL yet)."""
+        return self._parse_dtc_response(self._send("07", timeout=5.0), "47")
+
+    def _parse_dtc_response(self, resp: str, header: str) -> list:
+        """Shared DTC byte parser for Mode 03 (confirmed) and Mode 07 (pending)."""
         if not resp or "NO DATA" in resp.upper(): return []
         codes = []
         hex_str = resp.upper().replace(" ", "").replace("\n", "")
-        idx = hex_str.find("43")
+        idx = hex_str.find(header.upper())
         if idx >= 0: hex_str = hex_str[idx + 2:]
         prefix_map = {
             0:"P0",1:"P1",2:"P2",3:"P3",
@@ -586,7 +594,7 @@ class DataLogger:
 
         if log_file and fmt == "csv":
             self._csv_file = open(log_file, "w", newline="")
-            fields = ["timestamp", "elapsed_s"] + pids
+            fields = ["timestamp", "elapsed_s"] + pids + ["DTC_CONFIRMED", "DTC_PENDING"]
             self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=fields)
             self._csv_writer.writeheader()
             print(f"[LOG] CSV  → {log_file.resolve()}")
@@ -600,13 +608,21 @@ class DataLogger:
                 self._csv_file.flush()
             parts = []
             for k, v in record.items():
-                if k in ("timestamp","elapsed_s") or v is None: continue
+                if k in ("timestamp", "elapsed_s", "DTC_CONFIRMED", "DTC_PENDING") or v is None:
+                    continue
                 _, _, unit, _ = PID_REGISTRY[k]
                 parts.append(f"{k}={v}{unit}")
             ts = record["timestamp"][11:23]
-            print(f"[{ts}]  " + "  ".join(parts))
+            dtc_conf = record.get("DTC_CONFIRMED") or ""
+            dtc_pend = record.get("DTC_PENDING") or ""
+            dtc_str = ""
+            if dtc_conf:
+                dtc_str += f"  [CEL: {dtc_conf}]"
+            if dtc_pend:
+                dtc_str += f"  [PENDING: {dtc_pend}]"
+            print(f"[{ts}]  " + "  ".join(parts) + dtc_str)
         elif self.fmt == "json":
-            clean = {k:v for k,v in record.items() if v is not None}
+            clean = {k: v for k, v in record.items() if v is not None}
             self._json_records.append(clean)
             if self.log_file:
                 with open(self.log_file, "w") as f:
@@ -640,6 +656,9 @@ def main():
         help="Print full PID registry and exit")
     args = parser.parse_args()
 
+    parser.add_argument("--dtc-interval", type=int, default=30,
+        help="Re-read DTCs every N poll cycles during logging (default: 30 ≈ every 30s)")
+
     if args.list_pids:
         print(f"\n{'NAME':<28} {'PID':<6} {'UNIT':<8} DESCRIPTION")
         print("─" * 80)
@@ -664,12 +683,20 @@ def main():
 
     # ── DTC mode ──────────────────────────────────────────────────────────────
     if args.dtc:
-        print("[DTC] Reading stored codes...")
+        print("[DTC] Reading stored codes (Mode 03 — confirmed)...")
         codes = elm.get_dtcs()
         if codes:
-            print(f"  Found {len(codes)} code(s): {', '.join(codes)}")
+            print(f"  Confirmed ({len(codes)}): {', '.join(codes)}")
         else:
-            print("  No stored trouble codes.")
+            print("  No confirmed trouble codes.")
+
+        print("[DTC] Reading pending codes (Mode 07 — not yet confirmed)...")
+        pending = elm.get_pending_dtcs()
+        if pending:
+            print(f"  Pending   ({len(pending)}): {', '.join(pending)}")
+        else:
+            print("  No pending trouble codes.")
+
         sock.close()
         sys.exit(0)
 
@@ -729,8 +756,22 @@ def main():
         running = False
     signal.signal(signal.SIGINT, _stop)
 
+    # ── Initial DTC read ──────────────────────────────────────────────────────
+    print("[DTC] Reading initial trouble codes...")
+    current_dtcs_confirmed = elm.get_dtcs()
+    current_dtcs_pending   = elm.get_pending_dtcs()
+    if current_dtcs_confirmed:
+        print(f"[DTC] Confirmed ({len(current_dtcs_confirmed)}): {', '.join(current_dtcs_confirmed)}")
+    else:
+        print("[DTC] No confirmed codes at session start.")
+    if current_dtcs_pending:
+        print(f"[DTC] Pending   ({len(current_dtcs_pending)}): {', '.join(current_dtcs_pending)}")
+    else:
+        print("[DTC] No pending codes at session start.")
+    print()
+
     # ── Poll loop ─────────────────────────────────────────────────────────────
-    print(f"[POLL] {len(pids)} PIDs  |  interval {args.interval}s  |  Ctrl+C to stop\n")
+    print(f"[POLL] {len(pids)} PIDs  |  interval {args.interval}s  |  DTC refresh every {args.dtc_interval} cycles  |  Ctrl+C to stop\n")
 
     start = time.monotonic()
     n = 0
@@ -738,6 +779,28 @@ def main():
     try:
         while running:
             loop_start = time.monotonic()
+
+            # Refresh DTCs periodically (not every frame — Mode 03/07 is slow)
+            if n > 0 and n % args.dtc_interval == 0:
+                new_confirmed = elm.get_dtcs()
+                new_pending   = elm.get_pending_dtcs()
+                if new_confirmed != current_dtcs_confirmed:
+                    added   = set(new_confirmed) - set(current_dtcs_confirmed)
+                    cleared = set(current_dtcs_confirmed) - set(new_confirmed)
+                    if added:
+                        print(f"\n[DTC] ⚠  New confirmed code(s) set: {', '.join(sorted(added))}")
+                    if cleared:
+                        print(f"\n[DTC]    Confirmed code(s) cleared: {', '.join(sorted(cleared))}")
+                    current_dtcs_confirmed = new_confirmed
+                if new_pending != current_dtcs_pending:
+                    added   = set(new_pending) - set(current_dtcs_pending)
+                    cleared = set(current_dtcs_pending) - set(new_pending)
+                    if added:
+                        print(f"\n[DTC] ⚠  New pending code(s): {', '.join(sorted(added))}")
+                    if cleared:
+                        print(f"\n[DTC]    Pending code(s) cleared: {', '.join(sorted(cleared))}")
+                    current_dtcs_pending = new_pending
+
             record = {
                 "timestamp": datetime.now().isoformat(timespec="milliseconds"),
                 "elapsed_s": round(time.monotonic() - start, 2),
@@ -749,6 +812,11 @@ def main():
                     record[pid_name] = decoder(raw) if raw is not None else None
                 except Exception:
                     record[pid_name] = None
+
+            # Stamp current DTC state into every row
+            record["DTC_CONFIRMED"] = "|".join(current_dtcs_confirmed) if current_dtcs_confirmed else ""
+            record["DTC_PENDING"]   = "|".join(current_dtcs_pending)   if current_dtcs_pending   else ""
+
             logger.write(record)
             n += 1
             sleep = max(0, args.interval - (time.monotonic() - loop_start))
@@ -761,6 +829,10 @@ def main():
         print(f"\n[DONE] {n} samples  |  {total:.1f}s")
         if log_file and log_file.exists():
             print(f"[DONE] Saved → {log_file.resolve()}")
+        if current_dtcs_confirmed:
+            print(f"[DTC]  Confirmed at end of session: {', '.join(current_dtcs_confirmed)}")
+        if current_dtcs_pending:
+            print(f"[DTC]  Pending at end of session:   {', '.join(current_dtcs_pending)}")
 
 if __name__ == "__main__":
     main()
