@@ -51,17 +51,44 @@ CACTUS (development name Acty) is an OBD-II dongle + software platform that prov
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Homelab Infrastructure
-
-| Node | Role | Specs |
-|------|------|-------|
-| 4U DIY | **Inference node** | RTX 3060 12GB, Ubuntu 24.04, Ollama |
-| R7525 | Future ML training | 2× EPYC 7262, 512GB RAM (TBD: 2× L40 48GB) |
-| R720 | Secondary services, Ingest Server, local dependency repository | 2x Intel Xeon E5‑2697 v2, 32GB RAM |
-| CM3588 | Ed25519 signing & verfication | 8-core, 8GB RAM, Xubuntu |
-| TrueNAS DIY | Storage | 1 x Intel Xeon E5 2680 V4, 32GB RAM, 24.65 TiB RAIDZ1 |
-
-## Quick Start
+## Server Role Assignments (Infrastructure Host Architecture)
+ 
+The Acty homelab runs across six dedicated hosts. Hardware model names are intentionally omitted — roles are assigned to logical hosts, not specific hardware, to keep this reference stable as hardware changes.
+ 
+| Host   | Role                          | Services                                                                                                                                 | Rack Units |
+|--------|-------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|------------|
+| Host 1 | API and Web Tier              | acty-api (FastAPI), Supabase, NGINX, reverse proxy, verify.acty-labs.com endpoint, Redis cache                                           | 2U |
+| Host 2 | Database & Vector Store       | PostgreSQL, ChromaDB, pgBackRest, WAL archiving to TrueNAS, other utilities                                                              | 2U |
+| Host 3 | Inference                     | Ollama (deepseek-r1:14b, llama3.1:8b, nomic-embed-text), /generate-report endpoint only                                                 | 4U |
+| Host 4 | ML Training & Batch Processing | LSTM autoencoder training, XGBoost/Random Forest, Isolation Forest fitting, Federated Learning aggregator (Flower), embedding batch jobs | 4U |
+| Host 5 | Observability & Monitoring    | Grafana, Prometheus, Loki (log aggregation), Alertmanager, Uptime Kuma, node exporters across all hosts                                  | 2U |
+| Host 6 | Security & Signing            | Ed25519 signing service, ZK token rotation, ATECC608B interface, internal CA (mTLS between services), secrets manager (Vault or similar) | 1U |
+ 
+**Total rack footprint:** 15U
+ 
+---
+ 
+## Network
+ 
+- Subnet: 192.168.68.x
+- Switch: 24-port 1GbE
+- Storage backplane: TrueNAS (WAL archiving target for Host 2)
+ 
+---
+ 
+## Service Isolation Notes
+ 
+- **Host 6** holds all signing keys and CA material — no other host has access to private key material
+- **Host 5** has node exporters deployed across all other hosts for unified observability
+- **Host 3** serves only the `/generate-report` endpoint — inference is isolated from the API tier intentionally
+- Inter-service communication uses mTLS (internal CA on Host 6)
+ 
+---
+ 
+## Child Pages
+ 
+- [k3s Cluster Architecture — Expanded](https://www.notion.so/32acb09f290881d4a462c02a4e14831a)
+- [k3s Node Configuration YAML](https://www.notion.so/32acb09f2908810d9275e95528b228d1)
 
 ### 1. Inference node setup (4U DIY)
 ```bash
