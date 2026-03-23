@@ -1,8 +1,8 @@
-# Acty — OBD-II AI Diagnostics Platform
+# CACTUS — OBD-II AI Diagnostics Platform
 
 > Hardware-first vehicle intelligence. Local inference. Zero data brokering.
 
-Acty is an OBD-II dongle + software platform that provides AI-powered vehicle diagnostics, predictive maintenance, and tamper-evident health reporting — all running on your own hardware.
+CACTUS (development name Acty) is an OBD-II dongle + software platform that provides AI-powered vehicle diagnostics, predictive maintenance, and tamper-evident health reporting — all running on your own hardware.
 
 ## Architecture
 
