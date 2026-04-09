@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useUser } from '../context/UserContext';
 import { authStore } from '../context/UserContext';
+import { loginRemoteAccount, registerRemoteAccount } from '../authApi';
 import './Auth.css';
 
 // ── OAuth App IDs ─────────────────────────────────────────────────────────────
@@ -166,27 +167,41 @@ export function LoginPage() {
     await new Promise(r => setTimeout(r, 400));
 
     let account = authStore.getAccount(form.email);
+    const hash = await hashPw(form.password);
+
     if (!account) {
-      setError('No account found for that email. Please register first.');
-      setLoading(false);
-      return;
+      try {
+        account = await loginRemoteAccount(form.email, hash);
+        authStore.createAccount(account);
+      } catch (err) {
+        setError(err.message || 'No account found for that email. Please register first.');
+        setLoading(false);
+        return;
+      }
     }
+
     if (account.provider && !account._pwHash) {
       setError(`This account was created with ${account.provider}. Please use that sign-in method.`);
       setLoading(false);
       return;
     }
-    const hash = await hashPw(form.password);
+
     if (!account._pwHash) {
       // Migration: account was created before password hashing was introduced.
       // Accept any password on first login and set the hash going forward.
       authStore.updateAccount(form.email, { _pwHash: hash });
       account = authStore.getAccount(form.email);
     } else if (hash !== account._pwHash) {
-      setError('Incorrect password. Please try again.');
-      setLoading(false);
-      return;
+      try {
+        account = await loginRemoteAccount(form.email, hash);
+        authStore.createAccount(account);
+      } catch (err) {
+        setError(err.message || 'Incorrect password. Please try again.');
+        setLoading(false);
+        return;
+      }
     }
+
     authStore.setSession(form.email);
     setUser(account);
     setLoading(false);
@@ -367,6 +382,7 @@ export function RegisterPage() {
 
   const handleSubmit = async (skipVehicle = true) => {
     setLoading(true);
+    setError('');
     const vehicles = (!skipVehicle && form.vehicleMake && form.vehicleModel) ? [{
       id:          `v${Date.now()}`,
       year:        form.vehicleYear,
@@ -387,10 +403,16 @@ export function RegisterPage() {
       obdAdapters:     [],
       activeVehicleId: vehicles[0]?.id || null,
     };
-    authStore.createAccount(account);
-    setUser(authStore.getAccount(form.email));
-    setLoading(false);
-    navigate('/dashboard');
+    try {
+      const remoteAccount = await registerRemoteAccount(account);
+      authStore.createAccount(remoteAccount);
+      setUser(authStore.getAccount(form.email));
+      setLoading(false);
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err.message || 'Could not create account.');
+      setLoading(false);
+    }
   };
 
   const REGIONS    = ['North America', 'Europe', 'Asia Pacific', 'Latin America', 'Middle East & Africa'];

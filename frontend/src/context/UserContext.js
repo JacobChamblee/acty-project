@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { syncRemoteAccount } from '../authApi';
 
 const UserContext = createContext(null);
 
@@ -123,6 +124,12 @@ export const authStore = {
 // ── Provider ──────────────────────────────────────────────────────────────────
 export function UserProvider({ children }) {
   const [user, setUserRaw] = useState(loadInitialUser);
+
+  useEffect(() => {
+    if (user?.email) {
+      void syncRemoteAccount(user);
+    }
+  }, [user]);
 
   // Write to registry + update session pointer + local state
   const setUser = useCallback((u) => {

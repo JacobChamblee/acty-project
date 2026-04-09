@@ -17,11 +17,11 @@ Security invariants:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import datetime
+from typing import AsyncGenerator, Optional
 
 import asyncpg
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 
 from llm.key_encryption import decrypt_api_key, encrypt_api_key, make_key_hint
@@ -34,29 +34,25 @@ router = APIRouter(prefix="/api/v1/llm-config", tags=["llm-config"])
 
 import os
 
-_db_config = None
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
-def get_db_config():
-    """Get database configuration for creating connections."""
-    global _db_config
-    if _db_config is None:
-        DATABASE_URL = os.environ.get("DATABASE_URL", "")
-        _db_config = {
-            "host": DATABASE_URL.split("@")[1].split(":")[0] if "@" in DATABASE_URL else "localhost",
-            "port": int(DATABASE_URL.split(":")[-1].split("/")[0]) if ":" in DATABASE_URL.split("@")[-1] else 5432,
-            "user": DATABASE_URL.split("://")[1].split(":")[0] if "://" in DATABASE_URL else "",
-            "password": DATABASE_URL.split(":")[2].split("@")[0] if len(DATABASE_URL.split(":")) > 2 else "",
-            "database": DATABASE_URL.split("/")[-1] if "/" in DATABASE_URL else "",
-        }
-    return _db_config
 
-async def get_db_connection(request: Request) -> asyncpg.Connection:
-    """Create a new database connection for each request."""
+async def open_db_connection() -> asyncpg.Connection:
     try:
-        config = get_db_config()
-        return await asyncpg.connect(**config)
+        if not DATABASE_URL:
+            raise RuntimeError("DATABASE_URL is not configured")
+        return await asyncpg.connect(DATABASE_URL)
     except Exception as e:
         raise HTTPException(503, f"Database not available: {e}")
+
+
+async def get_db_connection() -> AsyncGenerator[asyncpg.Connection, None]:
+    """Create a new database connection for each request and close it automatically."""
+    conn = await open_db_connection()
+    try:
+        yield conn
+    finally:
+        await conn.close()
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -139,27 +135,24 @@ async def register_key(
     hint = make_key_hint(body.api_key)
     # body.api_key reference ends here — plaintext key is not referenced again below
 
-    try:
-        # Upsert — one config per provider per user (UNIQUE constraint)
-        await conn.execute(
-            """
-            INSERT INTO user_llm_configs
-                (id, user_id, provider, model_id, encrypted_api_key, key_iv, key_hint, is_active)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
-            ON CONFLICT (user_id, provider)
-            DO UPDATE SET
-                model_id          = EXCLUDED.model_id,
-                encrypted_api_key = EXCLUDED.encrypted_api_key,
-                key_iv            = EXCLUDED.key_iv,
-                key_hint          = EXCLUDED.key_hint,
-                is_active         = TRUE,
-                updated_at        = NOW()
-            """,
-            uuid.uuid4(), user_id, body.provider, body.model_id,
-            ciphertext, nonce, hint,
-        )
-    finally:
-        await conn.close()
+    # Upsert — one config per provider per user (UNIQUE constraint)
+    await conn.execute(
+        """
+        INSERT INTO user_llm_configs
+            (id, user_id, provider, model_id, encrypted_api_key, key_iv, key_hint, is_active)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
+        ON CONFLICT (user_id, provider)
+        DO UPDATE SET
+            model_id          = EXCLUDED.model_id,
+            encrypted_api_key = EXCLUDED.encrypted_api_key,
+            key_iv            = EXCLUDED.key_iv,
+            key_hint          = EXCLUDED.key_hint,
+            is_active         = TRUE,
+            updated_at        = NOW()
+        """,
+        uuid.uuid4(), user_id, body.provider, body.model_id,
+        ciphertext, nonce, hint,
+    )
 
     return {"status": "registered", "provider": body.provider, "key_hint": hint}
 
@@ -169,18 +162,15 @@ async def list_configs(
     user_id: uuid.UUID = Depends(current_user_id),
     conn: asyncpg.Connection = Depends(get_db_connection),
 ):
-    try:
-        rows = await conn.fetch(
-            """
-            SELECT provider, model_id, key_hint, is_active, created_at, last_used_at
-            FROM user_llm_configs
-            WHERE user_id = $1 AND is_active = TRUE
-            ORDER BY created_at
-            """,
-            user_id,
-        )
-    finally:
-        await conn.close()
+    rows = await conn.fetch(
+        """
+        SELECT provider, model_id, key_hint, is_active, created_at, last_used_at
+        FROM user_llm_configs
+        WHERE user_id = $1 AND is_active = TRUE
+        ORDER BY created_at
+        """,
+        user_id,
+    )
 
     reg = {p["provider_id"]: p for p in list_providers()}
     return [
@@ -206,13 +196,10 @@ async def delete_config(
     if provider not in VALID_PROVIDERS:
         raise HTTPException(400, f"Unknown provider: {provider!r}")
 
-    try:
-        result = await conn.execute(
-            "DELETE FROM user_llm_configs WHERE user_id = $1 AND provider = $2",
-            user_id, provider,
-        )
-    finally:
-        await conn.close()
+    result = await conn.execute(
+        "DELETE FROM user_llm_configs WHERE user_id = $1 AND provider = $2",
+        user_id, provider,
+    )
 
     if result == "DELETE 0":
         raise HTTPException(404, f"No config found for provider '{provider}'")
@@ -272,8 +259,12 @@ async def fetch_decrypted_key(user_id: uuid.UUID, provider: str, conn: asyncpg.C
         raise HTTPException(503, "Key decryption failed — contact support")
 
 
-async def mark_key_used(user_id: uuid.UUID, provider: str, conn: asyncpg.Connection) -> None:
-    await conn.execute(
-        "UPDATE user_llm_configs SET last_used_at = NOW() WHERE user_id = $1 AND provider = $2",
-        user_id, provider,
-    )
+async def mark_key_used(user_id: uuid.UUID, provider: str) -> None:
+    conn = await open_db_connection()
+    try:
+        await conn.execute(
+            "UPDATE user_llm_configs SET last_used_at = NOW() WHERE user_id = $1 AND provider = $2",
+            user_id, provider,
+        )
+    finally:
+        await conn.close()

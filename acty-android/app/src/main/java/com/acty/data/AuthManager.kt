@@ -2,6 +2,13 @@ package com.acty.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.acty.ActyConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -37,6 +44,8 @@ class AuthManager(private val context: Context) {
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("acty_auth", Context.MODE_PRIVATE)
+    private val httpClient = OkHttpClient()
+    private val jsonMediaType = "application/json".toMediaType()
 
     // ── Password hashing ──────────────────────────────────────────────────────
 
@@ -130,6 +139,119 @@ class AuthManager(private val context: Context) {
         saveAccountsJson(accounts)
     }
 
+    private data class RemoteAuthResponse(
+        val account: UserAccount? = null,
+        val error: String? = null,
+    )
+
+    private fun remoteAccountFromJson(o: JSONObject, fallbackPasswordHash: String = ""): UserAccount {
+        val activeVehicleId = o.optString("activeVehicleId", "")
+        val arr = try { o.getJSONArray("vehicles") } catch (_: Exception) { JSONArray() }
+        val vehicles = (0 until arr.length()).map { idx ->
+            val vehicleJson = arr.getJSONObject(idx)
+            val vehicleId = vehicleJson.optString("id", UUID.randomUUID().toString())
+            VehicleEntry(
+                id         = vehicleId,
+                make       = vehicleJson.optString("make", ""),
+                model      = vehicleJson.optString("model", ""),
+                year       = vehicleJson.opt("year")?.toString()?.toIntOrNull() ?: 2020,
+                drivetrain = vehicleJson.optString("drivetrain", ""),
+                obdMac     = vehicleJson.optString("mac", vehicleJson.optString("obdMac", "")),
+                isActive   = vehicleJson.optBoolean("active", vehicleId == activeVehicleId),
+            )
+        }
+
+        return UserAccount(
+            username             = o.optString("username", o.optString("displayName", "")),
+            displayName          = o.optString("displayName", o.optString("username", "")),
+            email                = o.optString("email", "").lowercase(),
+            pwHash               = fallbackPasswordHash.ifEmpty {
+                o.optString("pwHash", o.optString("_pwHash", ""))
+            },
+            region               = o.optString("region", ""),
+            vehicles             = vehicles,
+            byokApiKey           = o.optString("byokApiKey", ""),
+            byokProvider         = o.optString("byokProvider", ""),
+            syncWifiOnly         = o.optBoolean("syncWifiOnly", true),
+            alertDtcEnabled      = o.optBoolean("alertDtcEnabled", true),
+            alertLtftEnabled     = o.optBoolean("alertLtftEnabled", true),
+            alertServiceEnabled  = o.optBoolean("alertServiceEnabled", true),
+            alertChargingEnabled = o.optBoolean("alertChargingEnabled", true),
+            ltftAlertThreshold   = o.optDouble("ltftAlertThreshold", 7.5).toFloat(),
+        )
+    }
+
+    private suspend fun loginRemote(email: String, passwordHash: String): RemoteAuthResponse =
+        withContext(Dispatchers.IO) {
+            try {
+                val requestBody = JSONObject()
+                    .put("email", email)
+                    .put("password_hash", passwordHash)
+                    .toString()
+                    .toRequestBody(jsonMediaType)
+                val request = Request.Builder()
+                    .url("${ActyConfig.API_BASE}/api/v1/auth/login")
+                    .post(requestBody)
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    val responseText = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) {
+                        val message = try {
+                            JSONObject(responseText).optString("detail", "")
+                        } catch (_: Exception) { "" }
+                        return@withContext RemoteAuthResponse(error = message.ifBlank {
+                            "No account found for that email."
+                        })
+                    }
+
+                    val payload = JSONObject(responseText)
+                    val accountJson = payload.optJSONObject("account")
+                        ?: return@withContext RemoteAuthResponse(error = "Invalid account response from server.")
+                    val pwHash = payload.optString("password_hash", passwordHash)
+                    RemoteAuthResponse(account = remoteAccountFromJson(accountJson, pwHash))
+                }
+            } catch (_: Exception) {
+                RemoteAuthResponse(error = "Could not reach the shared account service.")
+            }
+        }
+
+    private suspend fun registerRemote(account: UserAccount): RemoteAuthResponse =
+        withContext(Dispatchers.IO) {
+            try {
+                val requestBody = JSONObject()
+                    .put("email", account.email.lowercase())
+                    .put("password_hash", account.pwHash)
+                    .put("account", accountToJson(account))
+                    .toString()
+                    .toRequestBody(jsonMediaType)
+                val request = Request.Builder()
+                    .url("${ActyConfig.API_BASE}/api/v1/auth/register")
+                    .post(requestBody)
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    val responseText = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) {
+                        val message = try {
+                            JSONObject(responseText).optString("detail", "")
+                        } catch (_: Exception) { "" }
+                        return@withContext RemoteAuthResponse(error = message.ifBlank {
+                            "Could not create account."
+                        })
+                    }
+
+                    val payload = JSONObject(responseText)
+                    val accountJson = payload.optJSONObject("account")
+                        ?: return@withContext RemoteAuthResponse(error = "Invalid account response from server.")
+                    val pwHash = payload.optString("password_hash", account.pwHash)
+                    RemoteAuthResponse(account = remoteAccountFromJson(accountJson, pwHash))
+                }
+            } catch (_: Exception) {
+                RemoteAuthResponse(error = "Could not reach the shared account service.")
+            }
+        }
+
     // ── Session ───────────────────────────────────────────────────────────────
 
     private var _sessionEmail: String
@@ -145,24 +267,44 @@ class AuthManager(private val context: Context) {
 
     // ── Auth operations ───────────────────────────────────────────────────────
 
-    fun login(email: String, password: String): AuthResult {
-        val account = getAccount(email)
-            ?: return AuthResult.Error("No account found for that email.")
+    suspend fun login(email: String, password: String): AuthResult {
+        val normalizedEmail = email.trim().lowercase()
         val hash = hashPassword(password)
-        return if (account.pwHash.isEmpty()) {
-            // Migration: first login sets the hash
-            saveAccount(account.copy(pwHash = hash))
-            _sessionEmail = account.email.lowercase()
+        val localAccount = getAccount(normalizedEmail)
+
+        if (localAccount == null) {
+            val remote = loginRemote(normalizedEmail, hash)
+            val remoteAccount = remote.account
+            return if (remoteAccount != null) {
+                saveAccount(remoteAccount)
+                _sessionEmail = remoteAccount.email.lowercase()
+                AuthResult.Success
+            } else {
+                AuthResult.Error(remote.error ?: "No account found for that email.")
+            }
+        }
+
+        return if (localAccount.pwHash.isEmpty()) {
+            saveAccount(localAccount.copy(pwHash = hash))
+            _sessionEmail = localAccount.email.lowercase()
             AuthResult.Success
-        } else if (hash == account.pwHash) {
-            _sessionEmail = account.email.lowercase()
+        } else if (hash == localAccount.pwHash) {
+            _sessionEmail = localAccount.email.lowercase()
             AuthResult.Success
         } else {
-            AuthResult.Error("Incorrect password.")
+            val remote = loginRemote(normalizedEmail, hash)
+            val remoteAccount = remote.account
+            if (remoteAccount != null) {
+                saveAccount(remoteAccount)
+                _sessionEmail = remoteAccount.email.lowercase()
+                AuthResult.Success
+            } else {
+                AuthResult.Error(remote.error ?: "Incorrect password.")
+            }
         }
     }
 
-    fun register(
+    suspend fun register(
         username: String,
         email:    String,
         password: String,
@@ -180,7 +322,14 @@ class AuthManager(private val context: Context) {
             region      = region,
             vehicles    = vehicles,
         )
-        saveAccount(account)
+        val remote = registerRemote(account)
+        val savedAccount = remote.account ?: account
+
+        if (remote.account == null && remote.error?.contains("already exists", ignoreCase = true) == true) {
+            return AuthResult.Error(remote.error)
+        }
+
+        saveAccount(savedAccount)
         _sessionEmail = key
         return AuthResult.Success
     }

@@ -17,7 +17,7 @@ export const API_ENDPOINTS = {
   HEALTH: `${API_BASE}/health`,
   INSIGHTS: `${API_BASE}/insights`,
   EARLY_ACCESS: `${API_BASE}/api/early-access`,
-  LLM_CONFIG: `${API_BASE}/llm-config`,
+  LLM_CONFIG: `${API_BASE}/api/v1/llm-config`,
   CDR: `${API_BASE}/cdr`,
   ANOMALIES: `${API_BASE}/anomalies`,
 };

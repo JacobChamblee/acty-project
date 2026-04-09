@@ -103,6 +103,19 @@ CREATE TABLE IF NOT EXISTS alerts (
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Shared account registry used by the current web and Android prototype auth.
+-- This keeps accounts visible across clients until Supabase auth is fully wired.
+CREATE TABLE IF NOT EXISTS app_user_accounts (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email        TEXT NOT NULL UNIQUE,
+    username     TEXT,
+    display_name TEXT,
+    pw_hash      TEXT,
+    account_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ── Indexes ───────────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_sessions_vehicle_id   ON sessions(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_created_at   ON sessions(created_at DESC);
@@ -111,3 +124,4 @@ CREATE INDEX IF NOT EXISTS idx_maint_vehicle_id      ON maintenance_predictions(
 CREATE INDEX IF NOT EXISTS idx_reports_vehicle_id    ON diagnostic_reports(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_session_id     ON alerts(session_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_severity       ON alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_app_user_accounts_email ON app_user_accounts(email);

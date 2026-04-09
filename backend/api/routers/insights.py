@@ -111,6 +111,21 @@ async def _run_llm_generation(
             await q.put(token)
         _job_meta[job_id]["status"] = "complete"
     except Exception as exc:
+        if provider_id != "local":
+            try:
+                fallback_provider = get_provider("local")
+                fallback_model = fallback_provider.supported_models[0]
+                _job_meta[job_id]["provider"] = "local"
+                _job_meta[job_id]["model_id"] = fallback_model
+                await q.put("[INFO] Selected provider failed, falling back to Cactus Local.")
+                async for token in fallback_provider.stream_insight(
+                    cactus_prompt, fallback_model, ""
+                ):
+                    await q.put(token)
+                _job_meta[job_id]["status"] = "complete"
+                return
+            except Exception as fallback_exc:
+                exc = fallback_exc
         _job_meta[job_id]["status"] = "error"
         await q.put(exc)
     finally:
@@ -371,7 +386,7 @@ async def generate_insight(
 
     # Mark key as used (fire-and-forget, don't block 202 response)
     if provider_id != "local":
-        background_tasks.add_task(mark_key_used, user_id, provider_id, conn)
+        background_tasks.add_task(mark_key_used, user_id, provider_id)
 
     return InsightJobResponse(
         job_id=job_id,

@@ -1,4 +1,3 @@
-import os
 #!/usr/bin/env python3
 """
 00_setup.py
@@ -12,6 +11,7 @@ Run once before anything else:
 
 import subprocess
 import sys
+import os
 
 def run(cmd, check=True):
     print(f"  $ {cmd}")
@@ -88,7 +88,7 @@ except Exception as e:
 
 # ── Ollama check ──────────────────────────────────────────────────────────────
 print("\n[4] Ollama")
-OLLAMA_HOST = "os.environ.get("OLLAMA_HOST", "http://192.168.68.138:11434")"
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://192.168.68.138:11434")
 try:
     import httpx
     resp = httpx.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
@@ -108,7 +108,6 @@ except Exception as e:
 
 # ── directory structure ───────────────────────────────────────────────────────
 print("\n[5] Directories")
-import os
 for d in ["data/parsed", "data/chromadb"]:
     os.makedirs(d, exist_ok=True)
     print(f"  {d}/ ✓")

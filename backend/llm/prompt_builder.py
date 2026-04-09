@@ -226,8 +226,9 @@ def build_prompt(
     """
     # Sanitize: strip any key that looks like a raw time-series array
     safe_summary = {
-        k: v for k, v in session_summary.items()
-        if not isinstance(v, (list, tuple)) or len(v) <= 10
+        k: v
+        for k, v in session_summary.items()
+        if not isinstance(v, (list, tuple, dict, set))
     }
 
     return CactusPrompt(

@@ -1,0 +1,31 @@
+{
+  "mcp": {
+    "servers": {
+      "context-mode": {
+        "command": "context-mode",
+        "args": []
+      }
+    }
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(docker:*)",
+      "Bash(python*)",
+      "Read(src/**)",
+      "Read(backend/**)",
+      "Read(frontend/**)",
+      "Read(scripts/**)",
+      "Read(data_capture/**)"
+    ],
+    "deny": [
+      "Bash(sudo *)",
+      "Bash(rm -rf /*)",
+      "Read(.env)",
+      "Read(**/.env*)",
+      "Read(**/.private)",
+      "Read(**/secrets*)"
+    ]
+  }
+}

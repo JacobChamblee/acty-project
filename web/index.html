@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Acty — Drive Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:          #0f0f0f;
+    --card:        #1a1a1a;
+    --border:      #2a2a2a;
+    --text:        #e8e8e8;
+    --muted:       #888;
+    --accent:      #4fc3b0;
+    --green:       #4caf50;
+    --orange:      #ff9800;
+    --red:         #ef5350;
+    --blue:        #42a5f5;
+    --yellow:      #ffca28;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; }
+
+  /* ── Upload Zone ───────────────────────────────────────────────────────── */
+  #upload-screen {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 24px;
+  }
+  .acty-logo { font-size: 28px; font-weight: 700; letter-spacing: 3px; color: var(--accent); margin-bottom: 8px; }
+  .acty-sub  { color: var(--muted); margin-bottom: 48px; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
+
+  #drop-zone {
+    width: 100%; max-width: 480px; border: 2px dashed var(--border); border-radius: 16px;
+    padding: 64px 32px; text-align: center; cursor: pointer; transition: border-color .2s, background .2s;
+    background: var(--card);
+  }
+  #drop-zone.dragover { border-color: var(--accent); background: #1a2e2c; }
+  #drop-zone svg { width: 48px; height: 48px; stroke: var(--muted); margin-bottom: 16px; }
+  #drop-zone h3 { font-size: 16px; margin-bottom: 8px; }
+  #drop-zone p  { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  #drop-zone input[type=file] { display: none; }
+  .btn-upload {
+    display: inline-block; padding: 10px 28px; background: var(--accent); color: #0f0f0f;
+    border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; border: none;
+    transition: opacity .15s;
+  }
+  .btn-upload:hover { opacity: .85; }
+  .api-note { margin-top: 20px; color: var(--muted); font-size: 12px; }
+  .api-note input {
+    background: var(--card); border: 1px solid var(--border); color: var(--text);
+    padding: 4px 10px; border-radius: 6px; font-size: 12px; width: 260px; margin-left: 6px;
+  }
+
+  /* ── Loading ───────────────────────────────────────────────────────────── */
+  #loading-screen {
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 100vh; gap: 20px;
+  }
+  .spinner {
+    width: 52px; height: 52px; border: 4px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading-msg { color: var(--muted); font-size: 14px; }
+
+  /* ── Report ────────────────────────────────────────────────────────────── */
+  #report-screen { display: none; max-width: 780px; margin: 0 auto; padding: 0 0 48px; }
+
+  /* header */
+  .trip-header {
+    background: #141414; padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .trip-title   { font-size: 22px; font-weight: 700; }
+  .trip-meta    { color: var(--muted); font-size: 13px; margin-top: 3px; }
+
+  /* stats row */
+  .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border-bottom: 1px solid var(--border); }
+  .stat-cell { padding: 18px 20px; border-right: 1px solid var(--border); }
+  .stat-cell:last-child { border-right: none; }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 4px; }
+  .stat-value { font-size: 26px; font-weight: 700; line-height: 1.1; }
+  .stat-sub   { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+  /* section card */
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    margin: 16px 16px 0; overflow: hidden;
+  }
+  .card-title {
+    font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+    color: var(--accent); padding: 14px 18px 0;
+  }
+
+  /* chart row */
+  .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 16px 16px 0; }
+  .chart-card  { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .chart-card:first-child { border-radius: 12px 12px 12px 12px; margin-right: 8px; }
+  .chart-card:last-child  { border-radius: 12px 12px 12px 12px; }
+  .chart-label { font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+  canvas { width: 100% !important; }
+
+  /* thermal bars */
+  .thermal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 14px 18px 18px; }
+  .thermal-item {}
+  .thermal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .thermal-name  { font-size: 13px; color: var(--muted); }
+  .thermal-value { font-size: 18px; font-weight: 700; }
+  .thermal-bar-wrap { position: relative; height: 10px; border-radius: 5px; background: linear-gradient(to right, #1a6bbf, #1a9e6a, #4caf50, #ff9800, #ef5350); overflow: visible; margin-bottom: 8px; }
+  .thermal-dot { position: absolute; top: 50%; width: 16px; height: 16px; background: #fff; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 3px rgba(255,255,255,.2); pointer-events: none; }
+  .thermal-footer { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); }
+
+  /* metric rows (fueling, electrical) */
+  .metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; padding: 14px 18px 18px; }
+  .metric-item { padding-right: 16px; }
+  .metric-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .metric-value { font-size: 22px; font-weight: 700; }
+  .metric-sub   { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+  /* badges */
+  .badge {
+    display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .5px;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 4px; margin-left: 8px; vertical-align: middle;
+  }
+  .badge-green  { background: #1a3d1a; color: var(--green); }
+  .badge-orange { background: #3d2800; color: var(--orange); }
+  .badge-red    { background: #3d1010; color: var(--red); }
+  .badge-blue   { background: #0d2540; color: var(--blue); }
+  .badge-gray   { background: #2a2a2a; color: var(--muted); }
+
+  /* insights */
+  .insights-list { padding: 10px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .insight-card {
+    display: flex; gap: 14px; padding: 14px 16px; border-radius: 10px; align-items: flex-start;
+  }
+  .insight-warning { background: #2a1f00; border-left: 3px solid var(--orange); }
+  .insight-success { background: #0d2010; border-left: 3px solid var(--green); }
+  .insight-info    { background: #0a1e35; border-left: 3px solid var(--blue); }
+  .insight-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+  .insight-body h4 { font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+  .insight-body p  { font-size: 12px; color: #bbb; line-height: 1.55; }
+
+  /* footer */
+  .report-footer {
+    text-align: center; color: var(--muted); font-size: 12px;
+    padding: 16px 16px 0; border-top: 1px solid var(--border); margin: 16px 16px 0;
+  }
+
+  /* back button */
+  .btn-back {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--card); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px;
+    margin: 16px 16px 0; transition: border-color .15s;
+  }
+  .btn-back:hover { border-color: var(--accent); }
+
+  /* health ring */
+  .health-wrap { display: flex; justify-content: center; padding: 16px 0 0; }
+  .health-ring { position: relative; width: 80px; height: 80px; }
+  .health-ring svg { transform: rotate(-90deg); }
+  .health-ring .hl-num {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 20px; font-weight: 700;
+  }
+
+  @media (max-width: 540px) {
+    .stats-row    { grid-template-columns: repeat(2, 1fr); }
+    .charts-row   { grid-template-columns: 1fr; }
+    .chart-card:first-child { margin-right: 0; margin-bottom: 0; }
+    .metric-grid  { grid-template-columns: 1fr 1fr; }
+    .thermal-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════  UPLOAD SCREEN  ══════════════════ -->
+<div id="upload-screen">
+  <div class="acty-logo">ACTY</div>
+  <div class="acty-sub">Vehicle Intelligence Platform</div>
+
+  <div id="drop-zone">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <h3>Drop your OBD-II CSV here</h3>
+    <p>acty_obd_YYYYMMDD_HHMMSS.csv</p>
+    <label class="btn-upload">
+      Browse file
+      <input type="file" id="file-input" accept=".csv"/>
+    </label>
+  </div>
+
+  <p class="api-note">
+    API:
+    <input type="text" id="api-url" placeholder="http://localhost:8765"/>
+  </p>
+</div>
+
+<!-- ══════════════════  LOADING SCREEN  ══════════════════ -->
+<div id="loading-screen">
+  <div class="spinner"></div>
+  <div id="loading-msg">Analysing drive data…</div>
+</div>
+
+<!-- ══════════════════  REPORT SCREEN  ══════════════════ -->
+<div id="report-screen">
+
+  <button class="btn-back" id="btn-back">&#8592; New report</button>
+
+  <!-- Header -->
+  <div class="trip-header">
+    <div class="trip-title" id="r-title"></div>
+    <div class="trip-meta"  id="r-meta"></div>
+  </div>
+
+  <!-- Stats bar -->
+  <div class="stats-row">
+    <div class="stat-cell">
+      <div class="stat-label">Distance</div>
+      <div class="stat-value" id="r-dist"></div>
+      <div class="stat-sub"   id="r-dist-sub"></div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-label">Duration</div>
+      <div class="stat-value" id="r-dur"></div>
+      <div class="stat-sub">Active drive time</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-label">Avg speed</div>
+      <div class="stat-value" id="r-spd"></div>
+      <div class="stat-sub"   id="r-spd-sub"></div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-label">Fuel used</div>
+      <div class="stat-value" id="r-fuel"></div>
+      <div class="stat-sub"   id="r-fuel-sub"></div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="charts-row">
+    <div class="chart-card">
+      <div class="chart-label">Engine Warm-up</div>
+      <canvas id="chart-warmup" height="160"></canvas>
+    </div>
+    <div class="chart-card" style="display:flex;flex-direction:column;align-items:center;">
+      <div class="chart-label" style="align-self:flex-start;">Drive Profile</div>
+      <canvas id="chart-profile" height="140" style="max-width:180px;"></canvas>
+      <div id="profile-legend" style="font-size:12px;color:var(--muted);margin-top:8px;text-align:center;"></div>
+    </div>
+  </div>
+
+  <!-- Thermal -->
+  <div class="card">
+    <div class="card-title">Thermal Status at Trip End</div>
+    <div class="thermal-grid">
+      <div class="thermal-item">
+        <div class="thermal-header">
+          <span class="thermal-name">Coolant</span>
+          <span><span class="thermal-value" id="r-coolant"></span> <span class="badge" id="r-coolant-badge"></span></span>
+        </div>
+        <div class="thermal-bar-wrap"><div class="thermal-dot" id="dot-coolant"></div></div>
+        <div class="thermal-footer"><span>Cold</span><span>Ideal zone</span><span>Hot</span></div>
+      </div>
+      <div class="thermal-item">
+        <div class="thermal-header">
+          <span class="thermal-name">Engine oil</span>
+          <span><span class="thermal-value" id="r-oil"></span> <span class="badge" id="r-oil-badge"></span></span>
+        </div>
+        <div class="thermal-bar-wrap"><div class="thermal-dot" id="dot-oil"></div></div>
+        <div class="thermal-footer"><span>Cold</span><span>Ideal zone</span><span>Hot</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fueling -->
+  <div class="card">
+    <div class="card-title">Fueling System Health</div>
+    <div class="metric-grid">
+      <div class="metric-item">
+        <div class="metric-label">Short fuel trim (avg)</div>
+        <div class="metric-value"><span id="r-stft"></span><span class="badge" id="r-stft-badge"></span></div>
+        <div class="metric-sub">Healthy range: ±5%</div>
+      </div>
+      <div class="metric-item">
+        <div class="metric-label">Long fuel trim (avg)</div>
+        <div class="metric-value"><span id="r-ltft"></span><span class="badge" id="r-ltft-badge"></span></div>
+        <div class="metric-sub" id="r-ltft-sub"></div>
+      </div>
+      <div class="metric-item">
+        <div class="metric-label">Closed-loop time</div>
+        <div class="metric-value"><span id="r-cl"></span><span class="badge" id="r-cl-badge"></span></div>
+        <div class="metric-sub" id="r-ol-sub"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Electrical -->
+  <div class="card">
+    <div class="card-title">Electrical &amp; Charging</div>
+    <div class="metric-grid">
+      <div class="metric-item">
+        <div class="metric-label">Avg voltage</div>
+        <div class="metric-value"><span id="r-avgv"></span><span class="badge" id="r-avgv-badge"></span></div>
+      </div>
+      <div class="metric-item">
+        <div class="metric-label">Min voltage</div>
+        <div class="metric-value"><span id="r-minv"></span><span class="badge" id="r-minv-badge"></span></div>
+        <div class="metric-sub" id="r-dips-sub"></div>
+      </div>
+      <div class="metric-item">
+        <div class="metric-label">CEL / MIL</div>
+        <div class="metric-value"><span id="r-cel"></span><span class="badge" id="r-cel-badge"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Insights -->
+  <div class="card">
+    <div class="card-title">Acty Insights</div>
+    <div class="insights-list" id="r-insights"></div>
+  </div>
+
+  <!-- Footer -->
+  <div class="report-footer" id="r-footer"></div>
+
+</div><!-- /report-screen -->
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────────────
+const DEFAULT_API = window.location.hostname
+  ? `${window.location.protocol}//${window.location.hostname}:8765`
+  : 'http://localhost:8765';
+
+const $  = id => document.getElementById(id);
+const apiInput = $('api-url');
+apiInput.value = window.location.port === '8765'
+  ? '' // served from backend itself — use relative paths
+  : DEFAULT_API;
+
+function apiBase() {
+  return apiInput.value.trim().replace(/\/$/, '') || '';
+}
+
+// ── Screen helpers ────────────────────────────────────────────────────────
+let warmupChart = null, profileChart = null;
+
+function show(id) {
+  ['upload-screen','loading-screen','report-screen'].forEach(s => {
+    const el = $(s);
+    el.style.display = (s === id) ? (s === 'loading-screen' ? 'flex' : 'block') : 'none';
+  });
+}
+show('upload-screen');
+
+// ── Drag & drop ───────────────────────────────────────────────────────────
+const dropZone = $('drop-zone');
+const fileInput = $('file-input');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) processFile(file);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) processFile(fileInput.files[0]);
+});
+
+// ── Upload & analyse ──────────────────────────────────────────────────────
+async function processFile(file) {
+  show('loading-screen');
+  $('loading-msg').textContent = `Analysing ${file.name}…`;
+
+  const form = new FormData();
+  form.append('file', file);
+
+  try {
+    const res = await fetch(`${apiBase()}/upload`, { method: 'POST', body: form });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Server error ${res.status}`);
+    }
+    const data = await res.json();
+    renderReport(data);
+    show('report-screen');
+  } catch (err) {
+    show('upload-screen');
+    alert(`Error: ${err.message}`);
+  }
+}
+
+// ── Badge helper ──────────────────────────────────────────────────────────
+function badgeClass(status) {
+  if (!status) return 'badge-gray';
+  const s = status.toLowerCase();
+  if (['normal','good','clear','healthy'].some(k => s.includes(k))) return 'badge-green';
+  if (['watch','low dip','low'].some(k => s.includes(k)))           return 'badge-orange';
+  if (['critical','active'].some(k => s.includes(k)))               return 'badge-red';
+  return 'badge-gray';
+}
+function setBadge(id, text) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = text || '—';
+  el.className = `badge ${badgeClass(text)}`;
+}
+
+function fmt(v, unit='', decimals=1) {
+  if (v === null || v === undefined) return '—';
+  const n = typeof v === 'number' ? v.toFixed(decimals) : v;
+  return `${n}${unit}`;
+}
+
+// ── Render ────────────────────────────────────────────────────────────────
+function renderReport(d) {
+  // header
+  $('r-title').textContent = `${d.vehicle} · ${d.trip_label}`;
+  $('r-meta').textContent  = `${d.trip_date} · ${d.trip_time_range}`;
+
+  // stats
+  $('r-dist').textContent     = fmt(d.stats.distance_km, ' km', 1);
+  $('r-dist-sub').textContent = d.stats.distance_miles ? `${d.stats.distance_miles} miles` : '';
+  $('r-dur').textContent      = fmt(d.stats.duration_min, ' min', 1);
+  $('r-spd').textContent      = fmt(d.stats.avg_speed_kph, ' kph', 0);
+  $('r-spd-sub').textContent  = d.stats.avg_speed_mph ? `${d.stats.avg_speed_mph} mph while moving` : '';
+  if (d.stats.fuel_used_L) {
+    $('r-fuel').textContent    = `~${d.stats.fuel_used_L} L`;
+    $('r-fuel-sub').textContent = [
+      d.stats.fuel_economy_L100km ? `≈ ${d.stats.fuel_economy_L100km} L/100km` : '',
+      d.stats.fuel_economy_mpg    ? `${d.stats.fuel_economy_mpg} mpg` : '',
+    ].filter(Boolean).join(' · ');
+  } else {
+    $('r-fuel').textContent    = '—';
+    $('r-fuel-sub').textContent = '';
+  }
+
+  // warm-up chart
+  renderWarmup(d.warmup_chart);
+
+  // drive profile donut
+  renderProfile(d.drive_profile);
+
+  // thermal
+  if (d.thermal.coolant_temp !== null) {
+    $('r-coolant').textContent = `${d.thermal.coolant_temp}°C`;
+    setBadge('r-coolant-badge', d.thermal.coolant_status);
+    setThermalDot('dot-coolant', d.thermal.coolant_temp, 50, 130);
+  }
+  if (d.thermal.oil_temp !== null) {
+    $('r-oil').textContent = `${d.thermal.oil_temp}°C`;
+    setBadge('r-oil-badge', d.thermal.oil_status);
+    setThermalDot('dot-oil', d.thermal.oil_temp, 40, 160);
+  }
+
+  // fueling
+  const f = d.fueling;
+  $('r-stft').textContent = f.stft_avg !== null ? `${f.stft_avg >= 0 ? '+' : ''}${f.stft_avg.toFixed(2)}%` : '—';
+  setBadge('r-stft-badge', f.stft_status);
+  $('r-ltft').textContent = f.ltft_avg !== null ? `${f.ltft_avg >= 0 ? '+' : ''}${f.ltft_avg.toFixed(1)}%` : '—';
+  setBadge('r-ltft-badge', f.ltft_status);
+  if (f.ltft_avg !== null) {
+    $('r-ltft-sub').textContent = Math.abs(f.ltft_avg) >= 7.5 ? 'Below ideal −7.5% threshold' : 'Within normal range';
+  }
+  $('r-cl').textContent = f.closed_loop_pct !== null ? `${f.closed_loop_pct}%` : '—';
+  setBadge('r-cl-badge', f.closed_loop_status);
+  $('r-ol-sub').textContent = f.open_loop_pct !== null ? `Open-loop: ${f.open_loop_pct}%` : '';
+
+  // electrical
+  const e = d.electrical;
+  $('r-avgv').textContent = e.avg_voltage !== null ? `${e.avg_voltage}V` : '—';
+  setBadge('r-avgv-badge', e.avg_voltage_status);
+  $('r-minv').textContent = e.min_voltage !== null ? `${e.min_voltage}V` : '—';
+  setBadge('r-minv-badge', e.min_voltage_status);
+  $('r-dips-sub').textContent = e.dips_below_13_5v > 0 ? `${e.dips_below_13_5v} brief dip${e.dips_below_13_5v > 1 ? 's' : ''} below 13.5V` : '';
+  $('r-cel').textContent = e.cel_value || 'None';
+  setBadge('r-cel-badge', e.cel_status);
+
+  // insights
+  renderInsights(d.insights);
+
+  // footer
+  const parts = [];
+  if (d.odometer_km)    parts.push(`Odometer ${d.odometer_km.toLocaleString()} km`);
+  if (d.fuel_level_pct) parts.push(`Fuel level ${d.fuel_level_pct}%`);
+  parts.push(d.has_dtc ? 'DTC active' : 'No DTCs stored');
+  $('r-footer').textContent = parts.join(' · ');
+}
+
+// ── Warm-up chart ─────────────────────────────────────────────────────────
+function renderWarmup(wu) {
+  if (warmupChart) { warmupChart.destroy(); warmupChart = null; }
+  const ctx = $('chart-warmup').getContext('2d');
+  const datasets = [];
+  if (wu.coolant && wu.coolant.length) {
+    datasets.push({
+      label: 'Coolant °C', data: wu.coolant, borderColor: '#ef5350',
+      backgroundColor: 'transparent', tension: 0.3, borderWidth: 2, pointRadius: 0,
+    });
+  }
+  if (wu.oil && wu.oil.length) {
+    datasets.push({
+      label: 'Oil °C', data: wu.oil, borderColor: '#ff9800',
+      backgroundColor: 'transparent', tension: 0.3, borderWidth: 2, pointRadius: 0,
+    });
+  }
+  warmupChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: wu.labels_min, datasets },
+    options: {
+      responsive: true,
+      animation: { duration: 600 },
+      plugins: {
+        legend: { display: datasets.length > 1, labels: { color: '#888', font: { size: 10 } } },
+        tooltip: { mode: 'index', intersect: false },
+      },
+      scales: {
+        x: {
+          ticks: { color: '#666', maxTicksLimit: 8, font: { size: 10 } },
+          grid:  { color: '#222' },
+          title: { display: true, text: 'minutes', color: '#555', font: { size: 10 } },
+        },
+        y: {
+          ticks: { color: '#666', callback: v => `${v}°`, font: { size: 10 } },
+          grid:  { color: '#222' },
+        },
+      },
+    },
+  });
+}
+
+// ── Drive profile donut ───────────────────────────────────────────────────
+function renderProfile(dp) {
+  if (profileChart) { profileChart.destroy(); profileChart = null; }
+  const ctx = $('chart-profile').getContext('2d');
+  profileChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Moving', 'Idle'],
+      datasets: [{
+        data: [dp.moving_pct, dp.idle_pct],
+        backgroundColor: ['#42a5f5', '#3a3a3a'],
+        borderColor: ['#42a5f5', '#3a3a3a'],
+        borderWidth: 0,
+        hoverOffset: 4,
+      }],
+    },
+    options: {
+      responsive: true,
+      cutout: '68%',
+      animation: { duration: 600 },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed.toFixed(1)}%` } },
+      },
+    },
+  });
+  $('profile-legend').innerHTML =
+    `<span style="color:#42a5f5">■</span> Moving ${dp.moving_pct}%&nbsp;&nbsp;` +
+    `<span style="color:#666">■</span> Idle ${dp.idle_pct}%`;
+}
+
+// ── Thermal dot ───────────────────────────────────────────────────────────
+function setThermalDot(dotId, temp, cold, hot) {
+  const pct = Math.min(100, Math.max(0, (temp - cold) / (hot - cold) * 100));
+  $(dotId).style.left = `${pct}%`;
+}
+
+// ── Insights ──────────────────────────────────────────────────────────────
+const ICONS = { warning: '⚠', success: '✓', info: 'ℹ' };
+function renderInsights(insights) {
+  const list = $('r-insights');
+  list.innerHTML = '';
+  if (!insights || !insights.length) {
+    list.innerHTML = '<p style="color:var(--muted);padding:8px 0;">No significant findings this session.</p>';
+    return;
+  }
+  insights.forEach(ins => {
+    const card = document.createElement('div');
+    card.className = `insight-card insight-${ins.type}`;
+    card.innerHTML = `
+      <div class="insight-icon">${ICONS[ins.type] || 'ℹ'}</div>
+      <div class="insight-body">
+        <h4>${ins.title}</h4>
+        <p>${ins.body}</p>
+      </div>`;
+    list.appendChild(card);
+  });
+}
+
+// ── Back button ───────────────────────────────────────────────────────────
+$('btn-back').addEventListener('click', () => {
+  fileInput.value = '';
+  show('upload-screen');
+});
+</script>
+</body>
+</html>

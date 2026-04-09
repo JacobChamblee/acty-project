@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "context-mode": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "context-mode"
+      ],
+      "env": {
+        "CONTEXT_MODE_JSON": "true"
+      }
+    }
+  }
+}

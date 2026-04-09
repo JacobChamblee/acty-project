@@ -9,11 +9,8 @@ to the Android app over local WiFi.
 """
 
 import asyncio
-import glob
 import io
-import json
 import os
-import tempfile
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -25,13 +22,12 @@ import pandas as pd
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from ml.pipeline.report import generate_diagnostic_report
 
 # ── config ────────────────────────────────────────────────────────────────────
 CSV_DIR      = Path(os.environ.get("ACTY_CSV_DIR", str(Path.home())))
-PORT         = 8765
+PORT         = int(os.environ.get("ACTY_PORT", "8765"))
 HOST         = os.environ.get("ACTY_HOST", "0.0.0.0")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -49,25 +45,11 @@ THRESHOLDS = {
 }
 
 # ── database connection factory ─────────────────────────────────────────────────
-_db_config = None
-
-def get_db_config():
-    """Get database configuration for creating connections."""
-    global _db_config
-    if _db_config is None:
-        _db_config = {
-            "host": DATABASE_URL.split("@")[1].split(":")[0] if "@" in DATABASE_URL else "localhost",
-            "port": int(DATABASE_URL.split(":")[-1].split("/")[0]) if ":" in DATABASE_URL.split("@")[-1] else 5432,
-            "user": DATABASE_URL.split("://")[1].split(":")[0] if "://" in DATABASE_URL else "",
-            "password": DATABASE_URL.split(":")[2].split("@")[0] if len(DATABASE_URL.split(":")) > 2 else "",
-            "database": DATABASE_URL.split("/")[-1] if "/" in DATABASE_URL else "",
-        }
-    return _db_config
-
 async def get_db_connection():
     """Create a new database connection for each request."""
-    config = get_db_config()
-    return await asyncpg.connect(**config)
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is not configured")
+    return await asyncpg.connect(DATABASE_URL)
 
 
 @asynccontextmanager
@@ -132,9 +114,11 @@ app.add_middleware(
 # ── BYOK LLM routers ──────────────────────────────────────────────────────────
 from api.routers.llm_config import router as llm_config_router
 from api.routers.insights import router as insights_router
+from api.routers.auth import router as auth_router
 
 app.include_router(llm_config_router)
 app.include_router(insights_router)
+app.include_router(auth_router)
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 def find_latest_csv() -> Optional[Path]:
@@ -642,93 +626,98 @@ async def _persist_session(
     health_score: int,
 ) -> None:
     """Upsert session + alerts into PostgreSQL. Silently skips if DB unavailable."""
-    if not _pool:
+    if not DATABASE_URL:
         return
+    conn = None
     try:
-        async with _pool.acquire() as conn:
-            # Ensure default vehicle row exists
-            await conn.execute(
+        conn = await get_db_connection()
+
+        # Ensure default vehicle row exists
+        await conn.execute(
+            """
+            INSERT INTO vehicles (vehicle_id, make, model, year, engine)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (vehicle_id) DO NOTHING
+            """,
+            "default", "Toyota", "GR86", 2023, "FA24",
+        )
+
+        # Check if session already persisted
+        existing_id = await conn.fetchval(
+            "SELECT id FROM sessions WHERE filename = $1",
+            summary["filename"],
+        )
+
+        if existing_id is None:
+            session_id = await conn.fetchval(
                 """
-                INSERT INTO vehicles (vehicle_id, make, model, year, engine)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (vehicle_id) DO NOTHING
+                INSERT INTO sessions (
+                    vehicle_id, filename, session_date, session_time,
+                    duration_min, sample_count,
+                    avg_rpm, max_rpm, avg_speed_kmh, max_speed_kmh,
+                    avg_coolant_c, max_coolant_c, avg_engine_load,
+                    pct_time_moving, ltft_b1, stft_b1,
+                    avg_timing, avg_maf, fuel_level_pct, battery_v,
+                    health_score
+                ) VALUES (
+                    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+                    $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
+                ) RETURNING id
                 """,
-                "default", "Toyota", "GR86", 2023, "FA24",
-            )
-
-            # Check if session already persisted
-            existing_id = await conn.fetchval(
-                "SELECT id FROM sessions WHERE filename = $1",
+                "default",
                 summary["filename"],
+                summary["session_date"],
+                summary["session_time"],
+                summary["duration_min"],
+                summary["sample_count"],
+                summary["avg_rpm"],
+                summary["max_rpm"],
+                summary["avg_speed_kmh"],
+                summary["max_speed_kmh"],
+                summary["avg_coolant_c"],
+                summary["max_coolant_c"],
+                summary["avg_engine_load"],
+                summary["pct_time_moving"],
+                summary["ltft_b1"],
+                summary["stft_b1"],
+                summary["avg_timing"],
+                summary["avg_maf"],
+                summary["fuel_level_pct"],
+                summary["battery_v"],
+                health_score,
             )
+        else:
+            # Update health score in case alerts changed
+            await conn.execute(
+                "UPDATE sessions SET health_score = $1 WHERE id = $2",
+                health_score, existing_id,
+            )
+            session_id = existing_id
 
-            if existing_id is None:
-                session_id = await conn.fetchval(
-                    """
-                    INSERT INTO sessions (
-                        vehicle_id, filename, session_date, session_time,
-                        duration_min, sample_count,
-                        avg_rpm, max_rpm, avg_speed_kmh, max_speed_kmh,
-                        avg_coolant_c, max_coolant_c, avg_engine_load,
-                        pct_time_moving, ltft_b1, stft_b1,
-                        avg_timing, avg_maf, fuel_level_pct, battery_v,
-                        health_score
-                    ) VALUES (
-                        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-                        $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
-                    ) RETURNING id
-                    """,
-                    "default",
-                    summary["filename"],
-                    summary["session_date"],
-                    summary["session_time"],
-                    summary["duration_min"],
-                    summary["sample_count"],
-                    summary["avg_rpm"],
-                    summary["max_rpm"],
-                    summary["avg_speed_kmh"],
-                    summary["max_speed_kmh"],
-                    summary["avg_coolant_c"],
-                    summary["max_coolant_c"],
-                    summary["avg_engine_load"],
-                    summary["pct_time_moving"],
-                    summary["ltft_b1"],
-                    summary["stft_b1"],
-                    summary["avg_timing"],
-                    summary["avg_maf"],
-                    summary["fuel_level_pct"],
-                    summary["battery_v"],
-                    health_score,
-                )
-            else:
-                # Update health score in case alerts changed
-                await conn.execute(
-                    "UPDATE sessions SET health_score = $1 WHERE id = $2",
-                    health_score, existing_id,
-                )
-                session_id = existing_id
-
-            if session_id and alerts:
-                await conn.execute(
-                    "DELETE FROM alerts WHERE session_id = $1", session_id
-                )
-                await conn.executemany(
-                    """
-                    INSERT INTO alerts
-                        (session_id, vehicle_id, pid, label, severity, value, unit, message)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                    """,
-                    [
-                        (
-                            session_id, "default",
-                            a["pid"], a["label"], a["severity"],
-                            a["value"], a["unit"], a["message"],
-                        )
-                        for a in alerts
-                    ],
-                )
+        if session_id and alerts:
+            await conn.execute(
+                "DELETE FROM alerts WHERE session_id = $1", session_id
+            )
+            await conn.executemany(
+                """
+                INSERT INTO alerts
+                    (session_id, vehicle_id, pid, label, severity, value, unit, message)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """,
+                [
+                    (
+                        session_id, "default",
+                        a["pid"], a["label"], a["severity"],
+                        a["value"], a["unit"], a["message"],
+                    )
+                    for a in alerts
+                ],
+            )
     except Exception as e:
         print(f"[db] persist_session failed: {e}")
+    finally:
+        if conn is not None:
+            await conn.close()
 
 
 # ── routes ────────────────────────────────────────────────────────────────────
@@ -883,4 +872,4 @@ if __name__ == "__main__":
     print(f"  Run: python3 -c \"import socket; print(socket.gethostbyname(socket.gethostname()))\"")
     print(f"  Then open: http://<your-ip>:{PORT}/insights")
     print(f"{'='*55}\n")
-    uvicorn.run("server:app", host=HOST, port=PORT, reload=True)
+    uvicorn.run(app, host=HOST, port=PORT)
