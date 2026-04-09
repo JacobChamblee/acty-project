@@ -25,6 +25,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.acty.data.ActyPrefs
+import com.acty.data.AuthManager
 import com.acty.data.SyncManager
 import com.acty.data.VehicleEntry
 import com.acty.model.*
@@ -34,27 +35,58 @@ import java.io.File
 // ── AccountScreen ─────────────────────────────────────────────────────────────
 
 @Composable
-fun AccountScreen(onAbout: () -> Unit) {
+fun AccountScreen(onAbout: () -> Unit, onSignOut: () -> Unit = {}) {
     val context     = LocalContext.current
     val prefs       = remember { ActyPrefs(context) }
+    val auth        = remember { AuthManager(context) }
     val syncManager = remember { SyncManager(context) }
+
+    // Load real user from AuthManager (falls back to empty if somehow not logged in)
+    val currentUser = auth.currentUser()
 
     var settings       by remember { mutableStateOf(
         AccountSettings(
-            username       = "jacob_acty",
-            email          = "jacob@acty-labs.com",
-            byokApiKey     = prefs.byokApiKey,
-            byokProvider   = prefs.byokProvider,
-            syncOnWifiOnly = prefs.syncWifiOnly,
+            username             = currentUser?.username        ?: "",
+            email                = currentUser?.email          ?: "",
+            byokApiKey           = currentUser?.byokApiKey     ?: prefs.byokApiKey,
+            byokProvider         = currentUser?.byokProvider   ?: prefs.byokProvider,
+            syncOnWifiOnly       = currentUser?.syncWifiOnly   ?: prefs.syncWifiOnly,
+            alertDtcEnabled      = currentUser?.alertDtcEnabled      ?: true,
+            alertLtftEnabled     = currentUser?.alertLtftEnabled     ?: true,
+            alertServiceEnabled  = currentUser?.alertServiceEnabled  ?: true,
+            alertChargingEnabled = currentUser?.alertChargingEnabled ?: true,
         )
     )}
-    var vehicles       by remember { mutableStateOf(prefs.loadVehicles()) }
+    var vehicles       by remember { mutableStateOf(currentUser?.vehicles ?: prefs.loadVehicles()) }
     var showByokSheet  by remember { mutableStateOf(false) }
     var showAddVehicle by remember { mutableStateOf(false) }
     var showBtPicker   by remember { mutableStateOf(false) }
-    var btPickerTarget by remember { mutableStateOf<String?>(null) } // vehicle id being edited, null = new
+    var showSignOutDialog by remember { mutableStateOf(false) }
+    var btPickerTarget by remember { mutableStateOf<String?>(null) }
 
-    fun refreshVehicles() { vehicles = prefs.loadVehicles() }
+    fun refreshVehicles() {
+        vehicles = auth.currentUser()?.vehicles ?: emptyList()
+    }
+
+    fun saveSettings(updated: AccountSettings) {
+        settings = updated
+        // Persist to auth account
+        val user = auth.currentUser() ?: return
+        auth.updateUser(user.copy(
+            byokApiKey           = updated.byokApiKey,
+            byokProvider         = updated.byokProvider,
+            syncWifiOnly         = updated.syncOnWifiOnly,
+            alertDtcEnabled      = updated.alertDtcEnabled,
+            alertLtftEnabled     = updated.alertLtftEnabled,
+            alertServiceEnabled  = updated.alertServiceEnabled,
+            alertChargingEnabled = updated.alertChargingEnabled,
+            ltftAlertThreshold   = updated.ltftAlertThreshold,
+        ))
+        // Keep ActyPrefs in sync for BT/sync subsystems
+        prefs.byokApiKey        = updated.byokApiKey
+        prefs.byokProvider      = updated.byokProvider
+        prefs.syncWifiOnly      = updated.syncOnWifiOnly
+    }
 
     Column(
         modifier = Modifier
@@ -92,6 +124,7 @@ fun AccountScreen(onAbout: () -> Unit) {
                     VehicleRow(
                         vehicle  = v,
                         onSetActive = {
+                            auth.setActiveVehicle(v.id)
                             prefs.setActiveVehicle(v.id)
                             refreshVehicles()
                         },
@@ -120,10 +153,10 @@ fun AccountScreen(onAbout: () -> Unit) {
 
         // ── Alerts section ───────────────────────────────────
         AccountSection(title = "Alerts") {
-            ToggleRow("DTC Codes",         settings.alertDtcEnabled)      { settings = settings.copy(alertDtcEnabled = it) }
-            ToggleRow("LTFT Threshold",    settings.alertLtftEnabled)      { settings = settings.copy(alertLtftEnabled = it) }
-            ToggleRow("Service Reminders", settings.alertServiceEnabled)   { settings = settings.copy(alertServiceEnabled = it) }
-            ToggleRow("Charging Alerts",   settings.alertChargingEnabled)  { settings = settings.copy(alertChargingEnabled = it) }
+            ToggleRow("DTC Codes",         settings.alertDtcEnabled)      { saveSettings(settings.copy(alertDtcEnabled = it)) }
+            ToggleRow("LTFT Threshold",    settings.alertLtftEnabled)     { saveSettings(settings.copy(alertLtftEnabled = it)) }
+            ToggleRow("Service Reminders", settings.alertServiceEnabled)  { saveSettings(settings.copy(alertServiceEnabled = it)) }
+            ToggleRow("Charging Alerts",   settings.alertChargingEnabled) { saveSettings(settings.copy(alertChargingEnabled = it)) }
 
             if (settings.alertLtftEnabled) {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -164,8 +197,7 @@ fun AccountScreen(onAbout: () -> Unit) {
                 },
             )
             ToggleRow("Wi-Fi Only", settings.syncOnWifiOnly) {
-                settings = settings.copy(syncOnWifiOnly = it)
-                prefs.syncWifiOnly = it
+                saveSettings(settings.copy(syncOnWifiOnly = it))
             }
             DropdownRow(
                 label    = "Data Retention",
@@ -250,7 +282,37 @@ fun AccountScreen(onAbout: () -> Unit) {
                 detail  = "0.1.0 — build 1",
                 onClick = {},
             )
+            HorizontalDivider(color = BgBorder, thickness = 0.5.dp,
+                modifier = Modifier.padding(horizontal = 16.dp))
+            SettingAction(
+                icon    = Icons.Outlined.Logout,
+                label   = "Sign Out",
+                tint    = StatusRed,
+                onClick = { showSignOutDialog = true },
+            )
         }
+    }
+
+    // ── Sign-out confirmation dialog ──────────────────────────────────────────
+
+    if (showSignOutDialog) {
+        AlertDialog(
+            onDismissRequest = { showSignOutDialog = false },
+            title            = { Text("Sign Out?") },
+            text             = { Text("Your data is saved and will be here when you sign back in.") },
+            confirmButton    = {
+                TextButton(onClick = {
+                    auth.logout()
+                    showSignOutDialog = false
+                    onSignOut()
+                }) {
+                    Text("Sign Out", color = StatusRed, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton    = {
+                TextButton(onClick = { showSignOutDialog = false }) { Text("Cancel") }
+            },
+        )
     }
 
     // ── Sheets ────────────────────────────────────────────────────────────────
@@ -260,10 +322,7 @@ fun AccountScreen(onAbout: () -> Unit) {
             currentKey      = settings.byokApiKey,
             currentProvider = settings.byokProvider,
             onSave          = { key, provider ->
-                // Persist both — key encrypted, provider plain
-                prefs.byokApiKey  = key
-                prefs.byokProvider = provider
-                settings = settings.copy(byokApiKey = key, byokProvider = provider)
+                saveSettings(settings.copy(byokApiKey = key, byokProvider = provider))
                 showByokSheet = false
             },
             onDismiss = { showByokSheet = false },
@@ -273,22 +332,20 @@ fun AccountScreen(onAbout: () -> Unit) {
     if (showAddVehicle) {
         AddVehicleSheet(
             onSave = { entry ->
-                val updated = prefs.loadVehicles().toMutableList()
-                // If this is the first vehicle, mark it active
-                val withActive = if (updated.isEmpty()) entry.copy(isActive = true) else entry
-                updated.add(withActive)
-                prefs.saveVehicles(updated)
-                // Save its MAC as the active OBD address too (if populated)
-                if (withActive.isActive && withActive.obdMac.isNotBlank()) {
-                    prefs.obdMacAddress  = withActive.obdMac
-                    prefs.obdDeviceName  = "${withActive.year} ${withActive.make} ${withActive.model}"
+                // Save to AuthManager (per-user) — this handles active logic
+                auth.addVehicle(entry)
+                // Keep ActyPrefs in sync for BT subsystem
+                val added = auth.currentUser()?.vehicles?.lastOrNull { it.make == entry.make && it.model == entry.model }
+                if (added?.isActive == true && added.obdMac.isNotBlank()) {
+                    prefs.obdMacAddress = added.obdMac
+                    prefs.obdDeviceName = "${added.year} ${added.make} ${added.model}"
                 }
                 refreshVehicles()
                 showAddVehicle = false
             },
             onDismiss = { showAddVehicle = false },
             onPickBt  = {
-                btPickerTarget = null   // new vehicle
+                btPickerTarget = null
                 showBtPicker   = true
             },
         )
@@ -300,20 +357,14 @@ fun AccountScreen(onAbout: () -> Unit) {
                 val mac  = device.address
                 val name = device.name ?: mac
                 if (btPickerTarget != null) {
-                    // Update existing vehicle's OBD MAC
-                    val updated = prefs.loadVehicles().map { v ->
-                        if (v.id == btPickerTarget) v.copy(obdMac = mac) else v
-                    }
-                    prefs.saveVehicles(updated)
-                    // If this vehicle is active, update global OBD MAC
-                    val active = updated.firstOrNull { it.id == btPickerTarget }
+                    auth.updateVehicleObd(btPickerTarget!!, mac)
+                    val active = auth.currentUser()?.vehicles?.firstOrNull { it.id == btPickerTarget }
                     if (active?.isActive == true) {
                         prefs.obdMacAddress = mac
                         prefs.obdDeviceName = name
                     }
                     refreshVehicles()
                 } else {
-                    // Being called from AddVehicleSheet — return to caller
                     prefs.obdMacAddress = mac
                     prefs.obdDeviceName = name
                 }

@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.acty.data.AuthManager
 import com.acty.ui.navigation.ActyNavHost
 import com.acty.ui.navigation.Screen
 import com.acty.ui.theme.*
@@ -147,6 +148,11 @@ fun ActyScaffold(
     val haptic        = LocalHapticFeedback.current
     val context       = LocalContext.current
 
+    // Determine start destination from persisted session
+    val startDestination = remember {
+        if (AuthManager(context).isLoggedIn()) Screen.Home.route else Screen.Login.route
+    }
+
     val navItems = listOf(
         NavItem(Screen.Home,       "Home",      Icons.Outlined.Home,             Icons.Filled.Home),
         NavItem(Screen.NeedleNest, "Analytics", Icons.Outlined.BarChart,         Icons.Filled.BarChart),
@@ -155,7 +161,7 @@ fun ActyScaffold(
         NavItem(Screen.Account,    "Account",   Icons.Outlined.Person,           Icons.Filled.Person),
     )
 
-    // Only show bottom nav on top-level screens
+    // Only show bottom nav on top-level app screens (not auth screens)
     val topLevelRoutes = navItems.map { it.screen.route }.toSet()
     val showNav = currentRoute in topLevelRoutes
 
@@ -214,6 +220,7 @@ fun ActyScaffold(
             ActyNavHost(
                 navController    = navController,
                 sessionViewModel = viewModel,
+                startDestination = startDestination,
             )
         }
     }
