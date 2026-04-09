@@ -83,6 +83,18 @@
   transition: all 0.2s;
 }
 .auth-provider-btn:hover { background: #F8FAFC; border-color: #CBD5E1; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.auth-provider-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.auth-provider-fb {
+  background: #1877F2; border-color: #1877F2; color: #fff;
+}
+.auth-provider-fb:hover { background: #1565d8; border-color: #1565d8; }
+
+/* Dark spinner (for light-background buttons like Google) */
+.auth-spinner-dark {
+  border-color: rgba(0,0,0,0.15);
+  border-top-color: #374151;
+}
 
 .auth-switch { font-size: 0.875rem; color: #94A3B8; text-align: center; }
 .auth-switch a { color: #1E40AF; font-weight: 600; }
