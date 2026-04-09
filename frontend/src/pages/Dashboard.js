@@ -2,16 +2,15 @@ import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { useUser } from '../context/UserContext';
+import { useUser, computeMaintenanceItems } from '../context/UserContext';
 import './Dashboard.css';
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 const NAV_ITEMS = [
-  { icon: '🏠', label: 'Dashboard', path: '/dashboard' },
+  { icon: '🏠', label: 'Dashboard',  path: '/dashboard' },
   { icon: '📊', label: 'NeedleNest', path: '/needlenest' },
-  { icon: '🚗', label: 'Vehicles', path: '/vehicles' },
-  { icon: '📤', label: 'Sharing', path: '/sharing' },
-  { icon: '⚙️', label: 'Settings', path: '/settings' },
+  { icon: '🚗', label: 'Vehicles',   path: '/vehicles' },
+  { icon: '📤', label: 'Sharing',    path: '/sharing' },
 ];
 
 export function Sidebar() {
@@ -30,6 +29,9 @@ export function Sidebar() {
           <span>{n.icon}</span> {n.label}
         </Link>
       ))}
+      <Link to="/settings" className={`sidebar-nav-item ${loc.pathname === '/settings' ? 'active' : ''}`}>
+        <span>⚙️</span> Settings
+      </Link>
       <div style={{ flex: 1 }}/>
       <div className="sidebar-section-label">Quick Capture</div>
       <button className="sidebar-capture-btn">
@@ -114,73 +116,80 @@ const FADE_UP = {
   visible: (i = 0) => ({ opacity: 1, y: 0, transition: { duration: 0.5, delay: i * 0.08, ease: [0.22,1,0.36,1] } }),
 };
 
-// ── Oil change status (mirrors OilIntervalAdvisor output) ────────────────────
-// In production this comes from the backend after running the Python advisor.
-// Fields match oil_interval_advisor.py status() output exactly.
-const OIL_STATUS = {
-  status:                   'monitor',   // ok | monitor | due_soon | overdue
-  pct_threshold_used:       68,          // % of severity threshold consumed
-  equiv_miles_remaining:    1600,        // equivalent miles left before recommended change
-  actual_miles_since_change: 3200,       // odometer miles since last change
-  implied_interval_mi:      '5,000–7,000 miles',
-  driving_profile:          'City / stop-and-go — elevated oil stress',
-  avg_severity_mult:        1.9,         // 1.9× harsher than ideal highway
-  dominant_degradation_factor: 'cold starts',
-  recommendation:           'Oil at ~68% of recommended severity threshold. Primary wear factor: cold starts. Estimated 1,600 equivalent miles remaining.',
-};
+// ── Maintenance countdown panel ───────────────────────────────────────────────
+function statusStyle(status) {
+  switch (status) {
+    case 'overdue':  return { color: '#DC2626', bg: '#FEF2F2', bar: '#EF4444', badge: 'Overdue' };
+    case 'due_soon': return { color: '#B45309', bg: '#FEF3C7', bar: '#F59E0B', badge: 'Due Soon' };
+    case 'watch':    return { color: '#B45309', bg: '#FFFBEB', bar: '#F59E0B', badge: 'Watch' };
+    case 'ok':       return { color: '#065F46', bg: '#ECFDF5', bar: '#10B981', badge: 'Good' };
+    default:         return { color: '#475569', bg: '#F8FAFC', bar: '#94A3B8', badge: 'Unknown' };
+  }
+}
 
-function OilChangeInsightCard({ oil = OIL_STATUS }) {
-  const pct = Math.min(oil.pct_threshold_used, 100);
-  const { color, bg, border, badge } = pct >= 100
-    ? { color: '#EF4444', bg: '#FEF2F2', border: '#FECACA', badge: 'Overdue' }
-    : pct >= 85
-    ? { color: '#EF4444', bg: '#FEF2F2', border: '#FCA5A5', badge: 'Due Soon' }
-    : pct >= 65
-    ? { color: '#F59E0B', bg: '#FFFBEB', border: '#FDE68A', badge: 'Monitor' }
-    : { color: '#10B981', bg: '#ECFDF5', border: '#A7F3D0', badge: 'Good' };
+function MaintenanceCountdownCard({ items, currentOdometer }) {
+  if (!currentOdometer) {
+    return (
+      <div className="insight-card" style={{ background: '#F8FAFC', borderColor: '#E2E8F0', flexDirection: 'column', alignItems: 'stretch', gap: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+          <div className="insight-icon" style={{ background: '#E2E8F0' }}>🔧</div>
+          <div>
+            <h4 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A' }}>Maintenance Schedule</h4>
+            <div style={{ fontSize: '0.8rem', color: '#94A3B8' }}>Oil change, filters, brakes, fluids</div>
+          </div>
+        </div>
+        <p style={{ fontSize: '0.8125rem', color: '#64748B', margin: 0, lineHeight: 1.6 }}>
+          Enter your current odometer in <Link to="/settings" style={{ color: '#1E40AF', fontWeight: 600 }}>Settings → Maintenance</Link> to enable mileage countdowns for all service items.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="insight-card oil-change-card" style={{ background: bg, borderColor: border, flexDirection: 'column', alignItems: 'stretch', gap: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', marginBottom: '0.875rem' }}>
-        <div className="insight-icon" style={{ background: border + '80', flexShrink: 0 }}>🔧</div>
-        <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
-            <h4 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A' }}>Oil Change Estimate</h4>
-            <span style={{ fontSize: '0.75rem', fontWeight: 700, color, background: color + '18', padding: '2px 8px', borderRadius: 100, border: `1px solid ${color}40` }}>{badge}</span>
-          </div>
-          <div style={{ fontSize: '0.8125rem', color: '#64748B' }}>Severity-weighted · driven by actual PID data</div>
+    <div className="insight-card" style={{ background: '#fff', borderColor: '#E2E8F0', flexDirection: 'column', alignItems: 'stretch', gap: 0, padding: '1rem 1.125rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.875rem' }}>
+        <div>
+          <h4 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A' }}>Maintenance Schedule</h4>
+          <div style={{ fontSize: '0.8rem', color: '#94A3B8' }}>Current: {currentOdometer.toLocaleString()} mi</div>
         </div>
+        <Link to="/settings" style={{ fontSize: '0.75rem', color: '#1E40AF', fontWeight: 600, textDecoration: 'none' }}>Edit →</Link>
       </div>
-
-      {/* Progress bar */}
-      <div style={{ marginBottom: '0.875rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.375rem' }}>
-          <span style={{ fontSize: '0.8rem', color: '#475569', fontWeight: 500 }}>Oil Life Used</span>
-          <span style={{ fontSize: '0.8rem', fontWeight: 700, color }}>{pct}%</span>
-        </div>
-        <div style={{ height: 7, background: '#E2E8F0', borderRadius: 4, overflow: 'hidden' }}>
-          <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg, ${color}99, ${color})`, borderRadius: 4, transition: 'width 0.9s ease' }}/>
-        </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+        {items.map((item) => {
+          const s = statusStyle(item.status);
+          const pct = item.pctUsed ?? 0;
+          return (
+            <div key={item.key} style={{ background: s.bg, borderRadius: 10, padding: '0.625rem 0.75rem', border: `1px solid ${s.bar}30` }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.375rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '1rem' }}>{item.icon}</span>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#0F172A' }}>{item.label}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  {item.miRemaining !== null && (
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: s.color }}>
+                      {item.miRemaining <= 0
+                        ? `${Math.abs(item.miRemaining).toLocaleString()} mi overdue`
+                        : `${item.miRemaining.toLocaleString()} mi`}
+                    </span>
+                  )}
+                  <span style={{ fontSize: '0.7rem', fontWeight: 700, color: s.color, background: s.bar + '20', padding: '1px 7px', borderRadius: 100, border: `1px solid ${s.bar}40` }}>{s.badge}</span>
+                </div>
+              </div>
+              {item.pctUsed !== null && (
+                <div style={{ height: 4, background: '#E2E8F0', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.min(pct, 100)}%`, background: s.bar, borderRadius: 2, transition: 'width 0.8s ease' }}/>
+                </div>
+              )}
+              {item.status === 'unknown' && (
+                <div style={{ fontSize: '0.75rem', color: '#94A3B8', marginTop: '0.2rem' }}>
+                  No record — <Link to="/settings" style={{ color: '#1E40AF' }}>add last service date</Link>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
-
-      {/* Stats row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.625rem', marginBottom: '0.75rem' }}>
-        {[
-          { label: 'Miles since change', value: oil.actual_miles_since_change.toLocaleString() + ' mi' },
-          { label: 'Est. remaining', value: oil.equiv_miles_remaining.toLocaleString() + ' eq. mi' },
-          { label: 'Severity multiplier', value: oil.avg_severity_mult + '× vs. ideal' },
-          { label: 'Top wear factor', value: oil.dominant_degradation_factor },
-        ].map((s, i) => (
-          <div key={i} style={{ background: 'rgba(255,255,255,0.7)', borderRadius: 8, padding: '0.5rem 0.625rem' }}>
-            <div style={{ fontSize: '0.7rem', color: '#94A3B8', marginBottom: '0.15rem' }}>{s.label}</div>
-            <div style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#0F172A' }}>{s.value}</div>
-          </div>
-        ))}
-      </div>
-
-      <p style={{ fontSize: '0.8125rem', color: '#64748B', lineHeight: 1.55, margin: 0 }}>
-        Implied interval for your driving style: <strong>{oil.implied_interval_mi}</strong> · {oil.driving_profile}.
-      </p>
     </div>
   );
 }
@@ -236,8 +245,10 @@ function EmptyState({ username }) {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const { user, activeVehicle } = useUser();
+  const { user, activeVehicle, insightPrefs, dashPrefs, maintenance } = useUser();
   const navigate = useNavigate();
+
+  const maintenanceItems = computeMaintenanceItems(maintenance);
 
   const vehicleName = activeVehicle
     ? [activeVehicle.year, activeVehicle.make, activeVehicle.model, activeVehicle.trim].filter(Boolean).join(' ')
@@ -340,7 +351,7 @@ export default function Dashboard() {
           </motion.div>
 
           {/* LTFT trend chart */}
-          <motion.div custom={5} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card">
+          {dashPrefs.ltftChart && <motion.div custom={5} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card">
             <div className="chart-card-title">LTFT B1 — Session Trend</div>
             <div className="chart-card-sub">Long-term fuel trim across 7 sessions · normal: ±7.5%</div>
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
@@ -362,29 +373,40 @@ export default function Dashboard() {
                 <Area type="monotone" dataKey="ltft" name="LTFT B1" stroke="#F59E0B" strokeWidth={2.5} fill="url(#ltftGrad)" dot={{ fill: '#F59E0B', r: 3 }}/>
               </AreaChart>
             </ResponsiveContainer>
-          </motion.div>
+          </motion.div>}
 
           {/* Insights */}
           <motion.div custom={6} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card dash-insights-card">
             <div className="chart-card-title">AI Insights</div>
             <div className="chart-card-sub">Powered by Isolation Forest + RAG · your API key</div>
-            <OilChangeInsightCard/>
-            {INSIGHTS.map((ins, i) => (
-              <div key={i} className="insight-card" style={{ background: ins.bg, borderColor: ins.border }}>
-                <div className="insight-icon" style={{ background: ins.border + '60' }}>{ins.icon}</div>
-                <div className="insight-body">
-                  <h4>{ins.title}</h4>
-                  <p>{ins.desc}</p>
-                </div>
+            {insightPrefs.maintenanceCountdown && (
+              <MaintenanceCountdownCard items={maintenanceItems} currentOdometer={maintenance?.currentOdometer}/>
+            )}
+            {insightPrefs.ltft && (
+              <div className="insight-card" style={{ background: '#FFFBEB', borderColor: '#FDE68A' }}>
+                <div className="insight-icon" style={{ background: '#FDE68A60' }}>⚠️</div>
+                <div className="insight-body"><h4>LTFT B1 Lean Drift</h4><p>Long-term fuel trim drifted from −3.8% → −6.2% over 7 sessions. Consistent with MAF thermal drift. Smoke test recommended.</p></div>
               </div>
-            ))}
+            )}
+            {insightPrefs.thermal && (
+              <div className="insight-card" style={{ background: '#EFF6FF', borderColor: '#BFDBFE' }}>
+                <div className="insight-icon" style={{ background: '#BFDBFE60' }}>🌡️</div>
+                <div className="insight-body"><h4>Normal Thermal Profile</h4><p>Coolant reaches 90°C in 4.2 min. Oil lags 2.8 min. Catalyst lit-off at 312°C. All within factory service spec.</p></div>
+              </div>
+            )}
+            {insightPrefs.charging && (
+              <div className="insight-card" style={{ background: '#ECFDF5', borderColor: '#A7F3D0' }}>
+                <div className="insight-icon" style={{ background: '#A7F3D060' }}>⚡</div>
+                <div className="insight-body"><h4>Charging System Healthy</h4><p>Voltage avg 14.1V. No thermal derating. Alternator output consistent across all sessions.</p></div>
+              </div>
+            )}
             <button className="btn btn-ghost btn-sm" style={{ width: '100%', marginTop: '0.5rem' }}>
               ✨ Generate Full AI Report
             </button>
           </motion.div>
 
           {/* Recent sessions */}
-          <motion.div custom={7} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card">
+          {dashPrefs.sessionTable && <motion.div custom={7} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
               <div>
                 <div className="chart-card-title">Recent Sessions</div>
@@ -424,10 +446,10 @@ export default function Dashboard() {
                 ))}
               </tbody>
             </table>
-          </motion.div>
+          </motion.div>}
 
           {/* MPG trend */}
-          <motion.div custom={8} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card">
+          {dashPrefs.mpgChart && <motion.div custom={8} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card">
             <div className="chart-card-title">MPG Trend</div>
             <div className="chart-card-sub">Session average fuel economy · 7 sessions</div>
             <ResponsiveContainer width="100%" height={180}>
@@ -445,10 +467,10 @@ export default function Dashboard() {
                 <Area type="monotone" dataKey="mpg" name="MPG" stroke="#3B82F6" strokeWidth={2.5} fill="url(#mpgGrad)" dot={{ fill: '#3B82F6', r: 3 }}/>
               </AreaChart>
             </ResponsiveContainer>
-          </motion.div>
+          </motion.div>}
 
           {/* Quick actions */}
-          <motion.div custom={9} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card">
+          {dashPrefs.quickActions && <motion.div custom={9} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card">
             <div className="chart-card-title">Quick Actions</div>
             <div className="chart-card-sub">Common tasks</div>
             <div className="quick-actions-grid">
@@ -464,7 +486,7 @@ export default function Dashboard() {
                 </Link>
               ))}
             </div>
-          </motion.div>
+          </motion.div>}
         </div>
           </>
         )}

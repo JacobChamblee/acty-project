@@ -11,12 +11,14 @@ import Dashboard from './pages/Dashboard';
 import NeedleNest from './pages/NeedleNest';
 import About from './pages/About';
 import Vehicles from './pages/Vehicles';
+import Settings from './pages/Settings';
 
 // ── Shared Navbar ─────────────────────────────────────────────────────────────
 function Navbar() {
   const loc = useLocation();
   const navigate = useNavigate();
   const { user, activeVehicle, logout } = useUser();
+  const [menuOpen, setMenuOpen] = React.useState(false);
   const isDash = ['/dashboard', '/needlenest', '/vehicles', '/sharing', '/settings'].some(p => loc.pathname.startsWith(p));
   const isAuth = loc.pathname === '/login' || loc.pathname === '/register';
   if (isAuth) return null;
@@ -24,9 +26,10 @@ function Navbar() {
   const vehicleLabel = activeVehicle
     ? [activeVehicle.year, activeVehicle.make, activeVehicle.model].filter(Boolean).join(' ')
     : 'No vehicle';
-  const initial = user?.username?.[0]?.toUpperCase() || '?';
+  const displayName = user?.displayName || user?.username || '?';
+  const initial = displayName[0].toUpperCase();
 
-  const handleLogout = () => { logout(); navigate('/'); };
+  const handleLogout = () => { setMenuOpen(false); logout(); navigate('/'); };
 
   return (
     <nav className="navbar">
@@ -56,11 +59,43 @@ function Navbar() {
               <span style={{ fontSize: '14px' }}>🚗</span>
               <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>{vehicleLabel}</span>
             </Link>
-            <div
-              title="Sign out"
-              onClick={handleLogout}
-              style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg, #1E40AF, #3B82F6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}
-            >{initial}</div>
+            {/* Avatar with dropdown */}
+            <div style={{ position: 'relative' }}>
+              <div onClick={() => setMenuOpen(o => !o)} style={{ width: 34, height: 34, borderRadius: '50%', overflow: 'hidden', background: 'linear-gradient(135deg, #1E40AF, #3B82F6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer', border: menuOpen ? '2px solid #3B82F6' : '2px solid transparent', transition: 'border 0.15s' }}>
+                {user?.avatarUrl
+                  ? <img src={user.avatarUrl} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+                  : initial}
+              </div>
+              {menuOpen && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => setMenuOpen(false)}/>
+                  <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.12)', zIndex: 300, minWidth: 200, overflow: 'hidden' }}>
+                    <div style={{ padding: '0.875rem 1rem', borderBottom: '1px solid #F1F5F9' }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#0F172A' }}>{displayName}</div>
+                      <div style={{ fontSize: '0.8rem', color: '#94A3B8' }}>{user?.email}</div>
+                    </div>
+                    {[
+                      { label: 'Settings', to: '/settings' },
+                      { label: 'Vehicles', to: '/vehicles' },
+                    ].map(item => (
+                      <Link key={item.to} to={item.to} onClick={() => setMenuOpen(false)}
+                        style={{ display: 'block', padding: '0.625rem 1rem', fontSize: '0.875rem', color: '#475569', fontWeight: 500, transition: 'background 0.15s', textDecoration: 'none' }}
+                        onMouseEnter={e => e.target.style.background = '#F8FAFC'}
+                        onMouseLeave={e => e.target.style.background = 'transparent'}>
+                        {item.label}
+                      </Link>
+                    ))}
+                    <div style={{ borderTop: '1px solid #F1F5F9' }}>
+                      <button onClick={handleLogout} style={{ display: 'block', width: '100%', padding: '0.625rem 1rem', fontSize: '0.875rem', color: '#EF4444', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', transition: 'background 0.15s' }}
+                        onMouseEnter={e => e.target.style.background = '#FEF2F2'}
+                        onMouseLeave={e => e.target.style.background = 'transparent'}>
+                        Sign Out
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </>
         ) : !isDash ? (
           <>
@@ -150,7 +185,7 @@ function AppRoutes() {
           <Route path="/needlenest" element={<PageWrap><div className="page-content"><NeedleNest/></div></PageWrap>}/>
           <Route path="/vehicles" element={<PageWrap><div className="page-content"><Vehicles/></div></PageWrap>}/>
           <Route path="/sharing" element={<PageWrap><div className="page-content"><Dashboard/></div></PageWrap>}/>
-          <Route path="/settings" element={<PageWrap><div className="page-content"><Dashboard/></div></PageWrap>}/>
+          <Route path="/settings" element={<PageWrap><div className="page-content"><Settings/></div></PageWrap>}/>
           <Route path="*" element={<PageWrap><Landing/></PageWrap>}/>
         </Routes>
       </AnimatePresence>
