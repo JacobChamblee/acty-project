@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Data — never commit raw PID CSVs or personal drive data
+data/pid/
+data/*.csv
+data/chromadb/
+data/parsed/
+data/battery_history.json
+data/oil_*.json
+data/maintenance_history.json
+data/session_history.json
+
+# Models & embeddings (large binary files)
+*.pt
+*.pth
+*.onnx
+models/
+.cache/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node / Expo
+node_modules/
+.expo/
+frontend/dist/
+frontend/build/
+
+# Editor
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# iDRAC / secrets
+*.key
+*.pem
+*.crt
+secrets/
+
+# Build artifacts / packages
+*.deb
+*.rpm
+*.jar
