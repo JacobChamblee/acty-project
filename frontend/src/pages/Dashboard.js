@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { useUser } from '../context/UserContext';
 import './Dashboard.css';
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
@@ -126,20 +127,75 @@ function CustomTooltip({ active, payload, label }) {
   );
 }
 
+// ── Empty state (no vehicles) ─────────────────────────────────────────────────
+function EmptyState({ username }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', textAlign: 'center', padding: '2rem' }}>
+      <div style={{ fontSize: '4rem', marginBottom: '1.5rem' }}>🌵</div>
+      <h2 style={{ fontSize: '1.75rem', fontWeight: 800, marginBottom: '0.75rem' }}>
+        Welcome, {username || 'there'}!
+      </h2>
+      <p style={{ color: '#64748B', fontSize: '1.05rem', maxWidth: 460, lineHeight: 1.7, marginBottom: '2rem' }}>
+        Your Cactus Insights account is ready. Add your first vehicle and OBD-II adapter to start capturing sessions and analyzing your vehicle's health.
+      </p>
+      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+        <Link to="/vehicles" className="btn btn-primary btn-lg">
+          Add Your First Vehicle
+        </Link>
+        <Link to="/about" className="btn btn-ghost btn-lg">
+          Learn How It Works
+        </Link>
+      </div>
+      <div style={{ marginTop: '3rem', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', maxWidth: 600, width: '100%' }}>
+        {[
+          { step: '1', label: 'Add vehicle', desc: 'Year, make, model, trim' },
+          { step: '2', label: 'Pair OBD adapter', desc: 'Bluetooth or Wi-Fi dongle' },
+          { step: '3', label: 'Start capturing', desc: 'Live PIDs & session analytics' },
+        ].map(s => (
+          <div key={s.step} style={{ background: '#fff', border: '1px solid #E2E8F0', borderRadius: 12, padding: '1.25rem', textAlign: 'center' }}>
+            <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#EFF6FF', color: '#1E40AF', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 0.75rem' }}>{s.step}</div>
+            <div style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.25rem' }}>{s.label}</div>
+            <div style={{ fontSize: '0.8rem', color: '#94A3B8' }}>{s.desc}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const [activeVehicle] = useState('2024 Toyota GR86');
+  const { user, activeVehicle } = useUser();
+  const navigate = useNavigate();
+
+  const vehicleName = activeVehicle
+    ? [activeVehicle.year, activeVehicle.make, activeVehicle.model, activeVehicle.trim].filter(Boolean).join(' ')
+    : null;
+
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    return 'Good evening';
+  })();
+
+  const hasVehicles = user?.vehicles?.length > 0;
 
   return (
     <div className="dashboard-layout">
       <Sidebar/>
       <main className="dashboard-main">
+
+        {!hasVehicles ? (
+          <EmptyState username={user?.username}/>
+        ) : (
+          <>
         <motion.div variants={FADE_UP} custom={0} initial="hidden" animate="visible" className="dash-header">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
-              <h1>Good morning, Jacob</h1>
+              <h1>{greeting}, {user?.username || 'there'}</h1>
               <p style={{ color: '#94A3B8', fontSize: '0.9rem', marginTop: '0.25rem' }}>
-                {activeVehicle} · Last session: Apr 7, 2026
+                {vehicleName} · No sessions yet
               </p>
             </div>
             <Link to="/dashboard/capture" className="btn btn-primary">
@@ -338,6 +394,8 @@ export default function Dashboard() {
             </div>
           </motion.div>
         </div>
+          </>
+        )}
       </main>
     </div>
   );

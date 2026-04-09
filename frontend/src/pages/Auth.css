@@ -135,6 +135,11 @@
 
 .auth-form-actions { display: flex; gap: 0.75rem; margin-top: 0.5rem; }
 
+.auth-error {
+  background: #FEF2F2; border: 1px solid #FECACA; color: #DC2626;
+  padding: 0.625rem 0.875rem; border-radius: 8px; font-size: 0.875rem; margin-bottom: 1rem;
+}
+
 /* Responsive */
 @media (max-width: 900px) {
   .auth-layout { grid-template-columns: 1fr; }

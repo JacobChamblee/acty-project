@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useUser } from '../context/UserContext';
 import './Auth.css';
 
 const FADE_UP = {
@@ -44,14 +45,36 @@ function SidePanel() {
 export function LoginPage() {
   const [form, setForm] = useState({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const { setUser } = useUser();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
     setLoading(true);
-    await new Promise(r => setTimeout(r, 900)); // mock
-    setLoading(false);
-    navigate('/dashboard');
+    await new Promise(r => setTimeout(r, 700));
+    // Load existing account or create a bare one for the email
+    const stored = (() => {
+      try { return JSON.parse(localStorage.getItem('cactus_user')); } catch { return null; }
+    })();
+    if (stored && stored.email === form.email) {
+      setUser(stored);
+      setLoading(false);
+      navigate('/dashboard');
+    } else {
+      // New sign-in — bootstrap minimal account
+      setUser({
+        username: form.email.split('@')[0],
+        email: form.email,
+        region: '',
+        vehicles: [],
+        obdAdapters: [],
+        activeVehicleId: null,
+      });
+      setLoading(false);
+      navigate('/dashboard');
+    }
   };
 
   return (
@@ -63,6 +86,7 @@ export function LoginPage() {
             <h1 className="auth-form-title">Welcome back</h1>
             <p className="auth-form-sub">Sign in to your Cactus Insights account</p>
           </div>
+          {error && <div className="auth-error">{error}</div>}
           <form onSubmit={handleSubmit} className="auth-form">
             <div className="form-group">
               <label className="form-label">Email or Username</label>
@@ -112,10 +136,12 @@ export function LoginPage() {
 export function RegisterPage() {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
-    username: '', email: '', password: '', region: '', vehicleMake: '', vehicleModel: '', vehicleDrivetrain: '',
+    username: '', email: '', password: '', region: '',
+    vehicleYear: '', vehicleMake: '', vehicleModel: '', vehicleTrim: '', vehicleDrivetrain: '',
   });
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const { setUser } = useUser();
 
   const handleNext = (e) => {
     e.preventDefault();
@@ -125,7 +151,23 @@ export function RegisterPage() {
 
   const handleSubmit = async () => {
     setLoading(true);
-    await new Promise(r => setTimeout(r, 900));
+    await new Promise(r => setTimeout(r, 700));
+    const vehicles = (form.vehicleMake && form.vehicleModel) ? [{
+      id: `v${Date.now()}`,
+      year: form.vehicleYear,
+      make: form.vehicleMake,
+      model: form.vehicleModel,
+      trim: form.vehicleTrim,
+      drivetrain: form.vehicleDrivetrain,
+    }] : [];
+    setUser({
+      username: form.username,
+      email: form.email,
+      region: form.region,
+      vehicles,
+      obdAdapters: [],
+      activeVehicleId: vehicles[0]?.id || null,
+    });
     setLoading(false);
     navigate('/dashboard');
   };
@@ -191,18 +233,33 @@ export function RegisterPage() {
             )}
             {step === 3 && (
               <>
-                <div className="form-group">
-                  <label className="form-label">Make</label>
-                  <select className="form-input" value={form.vehicleMake}
-                    onChange={e => setForm({...form, vehicleMake: e.target.value})} required>
-                    <option value="">Select make…</option>
-                    {MAKES.map(m => <option key={m}>{m}</option>)}
-                  </select>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Year</label>
+                    <input type="number" className="form-input" placeholder="2024"
+                      min="1990" max="2026" value={form.vehicleYear}
+                      onChange={e => setForm({...form, vehicleYear: e.target.value})} required/>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Make</label>
+                    <select className="form-input" value={form.vehicleMake}
+                      onChange={e => setForm({...form, vehicleMake: e.target.value})} required>
+                      <option value="">Select…</option>
+                      {MAKES.map(m => <option key={m}>{m}</option>)}
+                    </select>
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label className="form-label">Model</label>
-                  <input type="text" className="form-input" placeholder="e.g. GR86, RAV4, F-150"
-                    value={form.vehicleModel} onChange={e => setForm({...form, vehicleModel: e.target.value})} required/>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Model</label>
+                    <input type="text" className="form-input" placeholder="GR86, RAV4…"
+                      value={form.vehicleModel} onChange={e => setForm({...form, vehicleModel: e.target.value})} required/>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Trim <span style={{ color: '#94A3B8', fontWeight: 400 }}>(optional)</span></label>
+                    <input type="text" className="form-input" placeholder="Premium, Sport…"
+                      value={form.vehicleTrim} onChange={e => setForm({...form, vehicleTrim: e.target.value})}/>
+                  </div>
                 </div>
                 <div className="form-group">
                   <label className="form-label">Drivetrain</label>
@@ -215,6 +272,9 @@ export function RegisterPage() {
                     ))}
                   </div>
                 </div>
+                <p style={{ fontSize: '0.8rem', color: '#94A3B8', marginTop: '-0.5rem' }}>
+                  You can skip this and add vehicles later from the Vehicles page.
+                </p>
               </>
             )}
 
@@ -225,6 +285,10 @@ export function RegisterPage() {
               <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={loading || (step === 2 && !form.region)}>
                 {loading ? <span className="auth-spinner"/> : step < 3 ? 'Continue' : 'Create Account'}
               </button>
+              {step === 3 && (
+                <button type="button" className="btn btn-ghost btn-sm" style={{ width: '100%', marginTop: '0.25rem' }}
+                  onClick={handleSubmit}>Skip — add vehicle later</button>
+              )}
             </div>
           </form>
 

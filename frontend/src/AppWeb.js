@@ -1,6 +1,7 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { UserProvider, useUser } from './context/UserContext';
 import './App.css';
 
 // Pages
@@ -9,13 +10,23 @@ import { LoginPage, RegisterPage } from './pages/Auth';
 import Dashboard from './pages/Dashboard';
 import NeedleNest from './pages/NeedleNest';
 import About from './pages/About';
+import Vehicles from './pages/Vehicles';
 
 // ── Shared Navbar ─────────────────────────────────────────────────────────────
 function Navbar() {
   const loc = useLocation();
+  const navigate = useNavigate();
+  const { user, activeVehicle, logout } = useUser();
   const isDash = ['/dashboard', '/needlenest', '/vehicles', '/sharing', '/settings'].some(p => loc.pathname.startsWith(p));
   const isAuth = loc.pathname === '/login' || loc.pathname === '/register';
   if (isAuth) return null;
+
+  const vehicleLabel = activeVehicle
+    ? [activeVehicle.year, activeVehicle.make, activeVehicle.model].filter(Boolean).join(' ')
+    : 'No vehicle';
+  const initial = user?.username?.[0]?.toUpperCase() || '?';
+
+  const handleLogout = () => { logout(); navigate('/'); };
 
   return (
     <nav className="navbar">
@@ -34,24 +45,29 @@ function Navbar() {
         <div className="nav-links">
           <Link to="/dashboard" className={loc.pathname === '/dashboard' ? 'active' : ''}>Dashboard</Link>
           <Link to="/needlenest" className={loc.pathname === '/needlenest' ? 'active' : ''}>NeedleNest</Link>
+          <Link to="/vehicles" className={loc.pathname === '/vehicles' ? 'active' : ''}>Vehicles</Link>
           <Link to="/about">About</Link>
         </div>
       )}
       <div className="nav-actions">
-        {isDash ? (
+        {isDash && user ? (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.375rem 0.75rem', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px' }}>
+            <Link to="/vehicles" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.375rem 0.75rem', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '8px', textDecoration: 'none' }}>
               <span style={{ fontSize: '14px' }}>🚗</span>
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>2024 GR86</span>
-            </div>
-            <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg, #1E40AF, #3B82F6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}>J</div>
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>{vehicleLabel}</span>
+            </Link>
+            <div
+              title="Sign out"
+              onClick={handleLogout}
+              style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg, #1E40AF, #3B82F6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}
+            >{initial}</div>
           </>
-        ) : (
+        ) : !isDash ? (
           <>
             <Link to="/login" className="btn btn-ghost btn-sm">Sign In</Link>
             <Link to="/register" className="btn btn-primary btn-sm">Get Started</Link>
           </>
-        )}
+        ) : null}
       </div>
     </nav>
   );
@@ -132,7 +148,7 @@ function AppRoutes() {
           <Route path="/about" element={<PageWrap><About/></PageWrap>}/>
           <Route path="/dashboard" element={<PageWrap><div className="page-content"><Dashboard/></div></PageWrap>}/>
           <Route path="/needlenest" element={<PageWrap><div className="page-content"><NeedleNest/></div></PageWrap>}/>
-          <Route path="/vehicles" element={<PageWrap><div className="page-content"><Dashboard/></div></PageWrap>}/>
+          <Route path="/vehicles" element={<PageWrap><div className="page-content"><Vehicles/></div></PageWrap>}/>
           <Route path="/sharing" element={<PageWrap><div className="page-content"><Dashboard/></div></PageWrap>}/>
           <Route path="/settings" element={<PageWrap><div className="page-content"><Dashboard/></div></PageWrap>}/>
           <Route path="*" element={<PageWrap><Landing/></PageWrap>}/>
@@ -145,10 +161,12 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <div className="App">
-      <BrowserRouter>
-        <AppRoutes/>
-      </BrowserRouter>
-    </div>
+    <UserProvider>
+      <div className="App">
+        <BrowserRouter>
+          <AppRoutes/>
+        </BrowserRouter>
+      </div>
+    </UserProvider>
   );
 }
