@@ -1,5 +1,2 @@
 name = "cactus-insights"
 pages_build_output_dir = "frontend/build"
-
-[build]
-command = "cd frontend && npm install && npm run build"
