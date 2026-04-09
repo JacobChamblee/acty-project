@@ -1,9 +1,14 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useUser, DEFAULT_MAINTENANCE, DEFAULT_INSIGHT_PREFS, DEFAULT_DASH_PREFS } from '../context/UserContext';
+import { useUser, DEFAULT_MAINTENANCE, DEFAULT_INSIGHT_PREFS, DEFAULT_DASH_PREFS, authStore } from '../context/UserContext';
 import { Sidebar } from './Dashboard';
 import './Settings.css';
+
+async function hashPw(password) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 const FADE = {
   hidden: { opacity: 0, y: 12 },
@@ -146,12 +151,18 @@ function AccountTab() {
     setEmailSaved(true); setTimeout(() => setEmailSaved(false), 2000);
   };
 
-  const savePassword = () => {
+  const savePassword = async () => {
     setPwError('');
     if (pw.next.length < 8) { setPwError('Password must be at least 8 characters.'); return; }
     if (pw.next !== pw.confirm) { setPwError('Passwords do not match.'); return; }
-    // In production: call backend. For now store hashed in localStorage.
-    updateUser({ _pwChanged: Date.now() });
+    // Verify current password if one is already set
+    if (user?._pwHash) {
+      const currentHash = await hashPw(pw.current);
+      if (currentHash !== user._pwHash) { setPwError('Current password is incorrect.'); return; }
+    }
+    const newHash = await hashPw(pw.next);
+    authStore.updateAccount(user.email, { _pwHash: newHash });
+    updateUser({ _pwHash: newHash });
     setPw({ current: '', next: '', confirm: '' });
     setPwSaved(true); setTimeout(() => setPwSaved(false), 2000);
   };

@@ -165,7 +165,7 @@ export function LoginPage() {
     setLoading(true);
     await new Promise(r => setTimeout(r, 400));
 
-    const account = authStore.getAccount(form.email);
+    let account = authStore.getAccount(form.email);
     if (!account) {
       setError('No account found for that email. Please register first.');
       setLoading(false);
@@ -177,7 +177,12 @@ export function LoginPage() {
       return;
     }
     const hash = await hashPw(form.password);
-    if (hash !== account._pwHash) {
+    if (!account._pwHash) {
+      // Migration: account was created before password hashing was introduced.
+      // Accept any password on first login and set the hash going forward.
+      authStore.updateAccount(form.email, { _pwHash: hash });
+      account = authStore.getAccount(form.email);
+    } else if (hash !== account._pwHash) {
       setError('Incorrect password. Please try again.');
       setLoading(false);
       return;
