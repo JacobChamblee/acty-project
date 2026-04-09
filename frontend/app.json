@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Acty",
+    "slug": "acty-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0F1117",
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#0F1117"
+      },
+      "package": "com.acty.mobile"
+    },
+    "plugins": []
+  }
+}

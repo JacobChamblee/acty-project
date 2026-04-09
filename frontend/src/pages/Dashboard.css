@@ -1,0 +1,86 @@
+/* ── Dashboard ────────────────────────────────────────────────────────────── */
+
+.dash-main-grid {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  grid-template-rows: auto auto auto;
+  gap: 1.25rem;
+}
+
+/* Health card spans left column 1 row */
+.dash-health-card { grid-column: 1; grid-row: 1; }
+
+/* LTFT trend spans right col 1 row */
+/* Sessions table spans full width row 2 */
+/* Insights left, MPG right row 3, quick actions appended */
+
+.dash-health-body {
+  display: flex; gap: 1.5rem; align-items: flex-start;
+  margin-bottom: 1rem;
+}
+.health-ring-wrap { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; }
+.health-ring-inner { position: relative; display: inline-flex; }
+.health-ring-label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.health-ring-label .score { font-size: 1.875rem; font-weight: 900; line-height: 1; }
+.health-ring-label .score-sub { font-size: 0.7rem; color: #94A3B8; font-weight: 500; }
+
+.dash-sub-scores { flex: 1; display: flex; flex-direction: column; gap: 0.625rem; }
+.sub-score-row {}
+
+.dash-dtc-row { display: flex; gap: 0.875rem; flex-wrap: wrap; }
+.dash-dtc-item { display: flex; align-items: center; gap: 0.35rem; font-size: 0.8125rem; font-weight: 500; color: #475569; }
+.dash-dtc-item.ok { color: #059669; }
+.dash-dtc-item.warn { color: #B45309; }
+
+.dash-insights-card .insight-card { border-width: 1px; border-style: solid; }
+
+/* Sessions table */
+.sessions-table {
+  width: 100%; border-collapse: collapse;
+}
+.sessions-table thead th {
+  font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.07em; color: #94A3B8;
+  padding: 0 0.75rem 0.6rem; text-align: left; white-space: nowrap;
+  border-bottom: 1px solid #F1F5F9;
+}
+.sessions-table tbody td {
+  padding: 0.6875rem 0.75rem;
+  border-bottom: 1px solid #F8FAFC;
+  font-size: 0.875rem;
+}
+.sessions-table tbody tr:last-child td { border-bottom: none; }
+.sessions-table tbody tr:hover { background: #F8FAFC; border-radius: 8px; }
+.session-id { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.775rem; color: #1E40AF; background: #EFF6FF; padding: 0.2rem 0.5rem; border-radius: 5px; }
+
+/* Quick actions */
+.quick-actions-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+.quick-action-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+  padding: 1rem 0.75rem; border-radius: 12px;
+  background: #F8FAFC; border: 1px solid #E2E8F0;
+  cursor: pointer; transition: all 0.2s; text-decoration: none;
+}
+.quick-action-btn:hover {
+  background: var(--qa-bg, #EFF6FF);
+  border-color: var(--qa-color, #1E40AF);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.07);
+}
+.qa-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+.qa-label { font-size: 0.8rem; font-weight: 600; color: #0F172A; text-align: center; }
+
+.sidebar-capture-btn {
+  display: flex; align-items: center; gap: 0.625rem;
+  padding: 0.75rem 0.875rem; border-radius: 10px;
+  background: linear-gradient(135deg, #1E40AF 0%, #3B82F6 100%);
+  color: #fff; font-size: 0.875rem; font-weight: 600;
+  border: none; cursor: pointer; width: 100%; margin-top: auto;
+  box-shadow: 0 4px 14px rgba(59,130,246,0.30); transition: all 0.2s;
+}
+.sidebar-capture-btn:hover { box-shadow: 0 6px 20px rgba(59,130,246,0.40); transform: translateY(-1px); }
+
+/* Responsive */
+@media (max-width: 1100px) {
+  .dash-main-grid { grid-template-columns: 1fr; }
+}

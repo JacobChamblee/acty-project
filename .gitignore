@@ -1,0 +1,162 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Acty Project - Production .gitignore
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Python ─────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.venv
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+pipenv.lock
+
+# ── Node.js/Frontend ───────────────────────────────────────────────────────────
+node_modules/
+package-lock.json
+npm-debug.log
+yarn-error.log
+dist/
+build/
+.expo/
+.expo-shared/
+.next/
+out/
+.vercel
+
+# ── IDE/Editor ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+.env.local
+
+# ── Docker ─────────────────────────────────────────────────────────────────────
+.dockerignore
+
+# ── Secrets & Environment ──────────────────────────────────────────────────────
+.env
+.env.*.local
+*.key
+*.pem
+*.pub
+secrets.json
+credentials.json
+.aws/
+
+# ── Data / Temp Files ──────────────────────────────────────────────────────────
+/data/
+/temp/
+/tmp/
+*.csv
+*.log
+*.tmp
+*.tempfiles
+/downloads/
+*.zip
+*.tar.gz
+
+# ── Database ───────────────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+pgdata/
+postgres_data/
+
+# ── Machine Learning / Model Files ────────────────────────────────────────────
+/models/
+model_cache/
+*.h5
+*.pkl
+*.pth
+*.pt
+chroma_db/
+.chromadb/
+
+# ── Hardware / Serial Logs ────────────────────────────────────────────────────
+serial_logs/
+*.com
+*.tty
+
+# ── Mobile / Android ──────────────────────────────────────────────────────────
+android/.gradle/
+android/build/
+android/captures/
+android/*.keystore
+*.jks
+
+# ── Generated Files ───────────────────────────────────────────────────────────
+*.bak
+*.backup
+*~
+*.swp
+.DS_Store
+Thumbs.db
+
+# ── VS Code Config (exclude settings, keep extensions list) ──────────────────
+.vscode/settings.json
+.vscode/tasks.json
+.vscode/launch.json
+# .vscode/extensions.json  ← keep this
+
+# ── Test Artifacts ───────────────────────────────────────────────────────────
+.pytest_cache/
+.tox/
+htmlcov/
+.coverage
+
+# ── Grafana ──────────────────────────────────────────────────────────────────
+grafana/provisioning/dashboards/*.json
+!grafana/provisioning/dashboards/default.json
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KEEP IN REPO:
+# ═══════════════════════════════════════════════════════════════════════════════
+# !.env.example       ← template with variable names only
+# !requirements.txt   ← Python dependencies
+# !package.json       ← Node.js dependencies
+# !docker-compose.yml ← local dev + prod configs
+# !scripts/           ← initialization & setup scripts
+# !.claude/           ← AI agent configuration
+# !.mcp.json         ← MCP server config
+# ═════════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,24 @@
+fastapi
+uvicorn
+pandas
+numpy
+sqlalchemy
+psycopg2-binary
+asyncpg
+chromadb
+torch
+scikit-learn
+xgboost
+python-multipart
+httpx
+
+# BYOK multi-provider LLM SDKs
+anthropic>=0.40.0
+openai>=1.50.0
+google-genai>=1.0.0          # per-client key isolation; replaces google-generativeai
+cohere>=5.0.0
+mistralai>=1.0.0
+groq>=0.11.0
+
+# Key encryption (AES-256-GCM)
+cryptography>=42.0.0

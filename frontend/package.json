@@ -1,0 +1,44 @@
+{
+  "name": "acty-website",
+  "version": "1.0.0",
+  "description": "Acty Cactus - Vehicle Diagnostics Landing Page",
+  "main": "src/indexWeb.js",
+  "homepage": "https://acty-labs.com",
+  "private": true,
+  "scripts": {
+    "dev": "react-scripts start",
+    "build": "react-scripts build",
+    "build:prod": "CI=true react-scripts build",
+    "test": "react-scripts test --watchAll=false",
+    "eject": "react-scripts eject",
+    "serve": "serve -s build -l 3000"
+  },
+  "dependencies": {
+    "framer-motion": "^12.38.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.14.0",
+    "recharts": "^3.8.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "react-scripts": "5.0.1",
+    "serve": "^14.2.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

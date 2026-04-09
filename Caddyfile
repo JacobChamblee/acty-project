@@ -1,0 +1,160 @@
+# Production Caddyfile for Acty Labs
+# Deployed on CM3588 (192.168.68.121)
+# Serves static React build and proxies API requests
+
+# Main website - static files
+acty-labs.com {
+    root * /home/pi/acty-site/build
+    try_files {path} {path}/ /index.html
+    file_server
+
+    # Security headers
+    header {
+        # Enable HSTS (30 days)
+        Strict-Transport-Security "max-age=2592000; includeSubDomains"
+        # Prevent clickjacking
+        X-Frame-Options "DENY"
+        # XSS protection
+        X-XSS-Protection "1; mode=block"
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+        # Referrer policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Content Security Policy
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.acty-labs.com"
+    }
+
+    # Gzip compression
+    encode gzip
+
+    # Cache static assets (1 year)
+    @static {
+        file {
+            try_files {path}
+        }
+        path *.css *.js *.png *.jpg *.jpeg *.gif *.ico *.svg *.woff *.woff2 *.ttf *.eot
+    }
+    header @static Cache-Control "public, max-age=31536000, immutable"
+
+    # API proxy to backend server
+    handle /api/* {
+        uri strip_prefix /api
+        reverse_proxy 192.168.68.138:8765 {
+            # Health check
+            health_uri /health
+            health_interval 30s
+            health_timeout 10s
+        }
+    }
+
+    # LLM config endpoints
+    handle /llm-config/* {
+        uri strip_prefix /llm-config
+        reverse_proxy 192.168.68.138:8765 {
+            health_uri /health
+            health_interval 30s
+            health_timeout 10s
+        }
+    }
+
+    # Insights endpoints
+    handle /insights/* {
+        uri strip_prefix /insights
+        reverse_proxy 192.168.68.138:8765 {
+            health_uri /health
+            health_interval 30s
+            health_timeout 10s
+        }
+    }
+
+    # Health check endpoint
+    handle /health {
+        respond "OK" 200
+    }
+
+    # TLS configuration - Support both custom certificates and Let's Encrypt
+    # Option 1: Use Cloudflare Origin Certificate (if available)
+    # tls /etc/ssl/certs/acty-labs.com.pem /etc/ssl/private/acty-labs.com.key
+    # 
+    # Option 2: Use Let's Encrypt (uncomment to enable automatic HTTPS)
+    # tls {
+    #     email admin@acty-labs.com
+    #     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    # }
+    #
+    # Option 3: Use system certificates (default, provided by Let's Encrypt)
+    tls {
+        policies {
+            uri acme-v02.api.letsencrypt.org/directory
+            on_demand
+        }
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/acty-labs.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
+    }
+}
+
+# API subdomain - direct proxy to backend
+api.acty-labs.com {
+    # Proxy all requests to backend API
+    reverse_proxy 192.168.68.138:8765 {
+        # Health check
+        health_uri /health
+        health_interval 30s
+        health_timeout 10s
+
+        # Header forwarding
+        header_up Host {host}
+        header_up X-Real-IP {remote}
+        header_up X-Forwarded-For {remote}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # TLS configuration - Support both custom certificates and Let's Encrypt
+    # Option 1: Use Cloudflare Origin Certificate (if available)
+    # tls /etc/ssl/certs/api.acty-labs.com.pem /etc/ssl/private/api.acty-labs.com.key
+    # 
+    # Option 2: Use Let's Encrypt (uncomment to enable automatic HTTPS)
+    # tls {
+    #     email admin@acty-labs.com
+    #     dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    # }
+    #
+    # Option 3: Use system certificates (default, provided by Let's Encrypt)
+    tls {
+        policies {
+            uri acme-v02.api.letsencrypt.org/directory
+            on_demand
+        }
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/api.acty-labs.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
+    }
+}
+
+# Redirect www to non-www
+www.acty-labs.com {
+    redir https://acty-labs.com{uri} permanent
+}
+
+# Redirect HTTP to HTTPS
+http://acty-labs.com {
+    redir https://acty-labs.com{uri} permanent
+}
+
+http://api.acty-labs.com {
+    redir https://api.acty-labs.com{uri} permanent
+}
+}

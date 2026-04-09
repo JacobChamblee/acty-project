@@ -1,0 +1,344 @@
+import React, { useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import './Dashboard.css';
+
+// ── Sidebar ──────────────────────────────────────────────────────────────────
+const NAV_ITEMS = [
+  { icon: '🏠', label: 'Dashboard', path: '/dashboard' },
+  { icon: '📊', label: 'NeedleNest', path: '/needlenest' },
+  { icon: '🚗', label: 'Vehicles', path: '/vehicles' },
+  { icon: '📤', label: 'Sharing', path: '/sharing' },
+  { icon: '⚙️', label: 'Settings', path: '/settings' },
+];
+
+export function Sidebar() {
+  const loc = useLocation();
+  return (
+    <div className="sidebar">
+      <div className="sidebar-section-label">Main</div>
+      {NAV_ITEMS.slice(0, 2).map(n => (
+        <Link key={n.path} to={n.path} className={`sidebar-nav-item ${loc.pathname === n.path ? 'active' : ''}`}>
+          <span>{n.icon}</span> {n.label}
+        </Link>
+      ))}
+      <div className="sidebar-section-label">Manage</div>
+      {NAV_ITEMS.slice(2).map(n => (
+        <Link key={n.path} to={n.path} className={`sidebar-nav-item ${loc.pathname === n.path ? 'active' : ''}`}>
+          <span>{n.icon}</span> {n.label}
+        </Link>
+      ))}
+      <div style={{ flex: 1 }}/>
+      <div className="sidebar-section-label">Quick Capture</div>
+      <button className="sidebar-capture-btn">
+        <span>⏺</span> Start Session
+      </button>
+    </div>
+  );
+}
+
+// ── Health Score Ring ─────────────────────────────────────────────────────────
+function HealthRing({ score, size = 120, strokeWidth = 10 }) {
+  const r = (size - strokeWidth) / 2;
+  const circ = 2 * Math.PI * r;
+  const progress = (score / 100) * circ;
+  const color = score >= 80 ? '#10B981' : score >= 55 ? '#F59E0B' : '#EF4444';
+  return (
+    <div className="health-ring-inner" style={{ width: size, height: size }}>
+      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#E2E8F0" strokeWidth={strokeWidth}/>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={strokeWidth}
+          strokeLinecap="round" strokeDasharray={`${progress} ${circ}`}
+          style={{ transition: 'stroke-dasharray 0.8s ease' }}
+        />
+      </svg>
+      <div className="health-ring-label" style={{ position:'absolute', inset:0, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
+        <div className="score" style={{ color }}>{score}</div>
+        <div className="score-sub">/ 100</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Mini sparkline ────────────────────────────────────────────────────────────
+function Spark({ data, color = '#3B82F6', h = 36, w = 80 }) {
+  if (!data || !data.length) return null;
+  const min = Math.min(...data), max = Math.max(...data);
+  const range = max - min || 1;
+  const pts = data.map((v, i) => `${(i/(data.length-1))*w},${h - ((v-min)/range)*(h-4)-2}`).join(' ');
+  const gradId = `sg${color.replace('#','')}${Math.random().toString(36).slice(2,6)}`;
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.15"/>
+          <stop offset="100%" stopColor={color} stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <polygon points={`0,${h} ${pts} ${w},${h}`} fill={`url(#${gradId})`}/>
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+// ── Mock data ─────────────────────────────────────────────────────────────────
+const SESSION_DATA = [
+  { date: 'Apr 1', ltft: -3.8, rpm: 1840, mpg: 28.2, health: 87 },
+  { date: 'Apr 2', ltft: -4.2, rpm: 2100, mpg: 26.1, health: 84 },
+  { date: 'Apr 3', ltft: -4.8, rpm: 1950, mpg: 27.4, health: 82 },
+  { date: 'Apr 4', ltft: -5.1, rpm: 2200, mpg: 25.8, health: 80 },
+  { date: 'Apr 5', ltft: -5.8, rpm: 1780, mpg: 29.1, health: 79 },
+  { date: 'Apr 6', ltft: -6.0, rpm: 2050, mpg: 26.7, health: 78 },
+  { date: 'Apr 7', ltft: -6.2, rpm: 2840, mpg: 26.4, health: 82 },
+];
+
+const INSIGHTS = [
+  { icon: '⚠️', bg: '#FFFBEB', border: '#FDE68A', title: 'LTFT B1 Lean Drift', severity: 'warn',
+    desc: 'Long-term fuel trim drifted from −3.8% → −6.2% over 7 sessions. Consistent with MAF thermal drift. Smoke test recommended.' },
+  { icon: '🌡️', bg: '#EFF6FF', border: '#BFDBFE', title: 'Normal Thermal Profile', severity: 'ok',
+    desc: 'Coolant reaches 90°C in 4.2 min. Oil lags 2.8 min. Catalyst lit-off at 312°C. All within factory service spec.' },
+  { icon: '⚡', bg: '#ECFDF5', border: '#A7F3D0', title: 'Charging System Healthy', severity: 'ok',
+    desc: 'Voltage avg 14.1V. No thermal derating. Alternator output consistent across all sessions.' },
+];
+
+const SESSIONS = [
+  { id: 'S-1943', date: 'Apr 7, 2026', vehicle: '2024 GR86', duration: '42 min', score: 74, ltft: '-6.2%', dtcs: 0, synced: true },
+  { id: 'S-1942', date: 'Apr 6, 2026', vehicle: '2024 GR86', duration: '28 min', score: 71, ltft: '-6.0%', dtcs: 0, synced: true },
+  { id: 'S-1941', date: 'Apr 5, 2026', vehicle: '2024 GR86', duration: '55 min', score: 68, ltft: '-5.8%', dtcs: 0, synced: true },
+];
+
+const FADE_UP = {
+  hidden: { opacity: 0, y: 16 },
+  visible: (i = 0) => ({ opacity: 1, y: 0, transition: { duration: 0.5, delay: i * 0.08, ease: [0.22,1,0.36,1] } }),
+};
+
+// ── Custom tooltip ────────────────────────────────────────────────────────────
+function CustomTooltip({ active, payload, label }) {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div style={{ background: '#fff', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0.6rem 0.875rem', boxShadow: '0 4px 16px rgba(0,0,0,0.08)' }}>
+      <div style={{ fontSize: '0.75rem', color: '#94A3B8', marginBottom: 4 }}>{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ fontSize: '0.875rem', fontWeight: 700, color: p.color }}>{p.name}: {p.value}</div>
+      ))}
+    </div>
+  );
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+export default function Dashboard() {
+  const [activeVehicle] = useState('2024 Toyota GR86');
+
+  return (
+    <div className="dashboard-layout">
+      <Sidebar/>
+      <main className="dashboard-main">
+        <motion.div variants={FADE_UP} custom={0} initial="hidden" animate="visible" className="dash-header">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <h1>Good morning, Jacob</h1>
+              <p style={{ color: '#94A3B8', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                {activeVehicle} · Last session: Apr 7, 2026
+              </p>
+            </div>
+            <Link to="/dashboard/capture" className="btn btn-primary">
+              ⏺ Start Session
+            </Link>
+          </div>
+        </motion.div>
+
+        {/* KPI row */}
+        <div className="kpi-grid">
+          {[
+            { icon: '❤️', bg: '#FEF2F2', label: 'Health Score', value: '82', unit: '/100', trend: '▼ 2 pts', dir: 'down', spark: [87,84,82,80,79,78,82] },
+            { icon: '⛽', bg: '#FFFBEB', label: 'LTFT B1', value: '-6.2', unit: '%', trend: 'Watch lean drift', dir: 'warn', spark: [-3.8,-4.2,-4.8,-5.1,-5.8,-6.0,-6.2] },
+            { icon: '🚗', bg: '#EFF6FF', label: 'City MPG', value: '26.4', unit: '', trend: '↑ 0.3 vs avg', dir: 'up', spark: [28.2,26.1,27.4,25.8,29.1,26.7,26.4] },
+            { icon: '⚡', bg: '#ECFDF5', label: 'Voltage', value: '14.1', unit: 'V', trend: '✓ Normal', dir: 'up', spark: [14.0,14.2,14.1,14.3,14.0,14.1,14.1] },
+          ].map((k, i) => (
+            <motion.div key={i} custom={i} variants={FADE_UP} initial="hidden" animate="visible" className="kpi-card">
+              <div className="kpi-icon-wrap" style={{ background: k.bg }}>{k.icon}</div>
+              <div className="kpi-label">{k.label}</div>
+              <div className="kpi-value">{k.value}<span className="kpi-unit">{k.unit}</span></div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.5rem' }}>
+                <div className={`kpi-trend ${k.dir}`}>{k.trend}</div>
+                <Spark data={k.spark} color={k.dir === 'up' ? '#10B981' : k.dir === 'warn' ? '#F59E0B' : '#EF4444'} w={60} h={28}/>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+
+        {/* Main grid */}
+        <div className="dash-main-grid">
+          {/* Health + Session score */}
+          <motion.div custom={4} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card dash-health-card">
+            <div className="chart-card-title">Vehicle Health</div>
+            <div className="chart-card-sub">2024 Toyota GR86</div>
+            <div className="dash-health-body">
+              <div className="health-ring-wrap">
+                <HealthRing score={82} size={130} strokeWidth={11}/>
+                <div style={{ marginTop: '0.75rem', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.8rem', color: '#94A3B8', fontWeight: 500 }}>Overall</div>
+                </div>
+              </div>
+              <div className="dash-sub-scores">
+                {[
+                  { label: 'Efficiency', score: 74, color: '#3B82F6' },
+                  { label: 'Thermal', score: 91, color: '#10B981' },
+                  { label: 'Smoothness', score: 80, color: '#8B5CF6' },
+                  { label: 'Charging', score: 95, color: '#10B981' },
+                ].map((s, i) => (
+                  <div key={i} className="sub-score-row">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                      <span style={{ fontSize: '0.8rem', color: '#475569', fontWeight: 500 }}>{s.label}</span>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: s.color }}>{s.score}</span>
+                    </div>
+                    <div style={{ height: 5, background: '#E2E8F0', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${s.score}%`, background: s.color, borderRadius: 3, transition: 'width 0.8s ease' }}/>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="dash-dtc-row">
+              <div className="dash-dtc-item ok">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                No active DTCs
+              </div>
+              <div className="dash-dtc-item ok">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                0 pending codes
+              </div>
+            </div>
+          </motion.div>
+
+          {/* LTFT trend chart */}
+          <motion.div custom={5} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card">
+            <div className="chart-card-title">LTFT B1 — Session Trend</div>
+            <div className="chart-card-sub">Long-term fuel trim across 7 sessions · normal: ±7.5%</div>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+              <span className="badge badge-amber">⚠ Lean watch</span>
+              <span className="badge badge-gray">7 sessions</span>
+            </div>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={SESSION_DATA} margin={{ top: 5, right: 5, bottom: 5, left: -20 }}>
+                <defs>
+                  <linearGradient id="ltftGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.15}/>
+                    <stop offset="95%" stopColor="#F59E0B" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false}/>
+                <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false}/>
+                <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`}/>
+                <Tooltip content={<CustomTooltip/>}/>
+                <Area type="monotone" dataKey="ltft" name="LTFT B1" stroke="#F59E0B" strokeWidth={2.5} fill="url(#ltftGrad)" dot={{ fill: '#F59E0B', r: 3 }}/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </motion.div>
+
+          {/* Insights */}
+          <motion.div custom={6} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card dash-insights-card">
+            <div className="chart-card-title">AI Insights</div>
+            <div className="chart-card-sub">Powered by Isolation Forest + RAG · your API key</div>
+            {INSIGHTS.map((ins, i) => (
+              <div key={i} className="insight-card" style={{ background: ins.bg, borderColor: ins.border }}>
+                <div className="insight-icon" style={{ background: ins.border + '60' }}>{ins.icon}</div>
+                <div className="insight-body">
+                  <h4>{ins.title}</h4>
+                  <p>{ins.desc}</p>
+                </div>
+              </div>
+            ))}
+            <button className="btn btn-ghost btn-sm" style={{ width: '100%', marginTop: '0.5rem' }}>
+              ✨ Generate Full AI Report
+            </button>
+          </motion.div>
+
+          {/* Recent sessions */}
+          <motion.div custom={7} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+              <div>
+                <div className="chart-card-title">Recent Sessions</div>
+                <div className="chart-card-sub" style={{ marginBottom: 0 }}>2024 Toyota GR86</div>
+              </div>
+              <Link to="/sessions" className="btn btn-ghost btn-sm">View all</Link>
+            </div>
+            <table className="sessions-table">
+              <thead>
+                <tr>
+                  <th>Session</th>
+                  <th>Date</th>
+                  <th>Duration</th>
+                  <th>Score</th>
+                  <th>LTFT B1</th>
+                  <th>DTCs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {SESSIONS.map((s, i) => (
+                  <tr key={i}>
+                    <td><span className="session-id">{s.id}</span></td>
+                    <td style={{ color: '#475569', fontSize: '0.8125rem' }}>{s.date}</td>
+                    <td style={{ color: '#94A3B8', fontSize: '0.8125rem' }}>{s.duration}</td>
+                    <td>
+                      <span style={{ fontWeight: 700, color: s.score >= 75 ? '#10B981' : s.score >= 60 ? '#F59E0B' : '#EF4444' }}>
+                        {s.score}
+                      </span>
+                    </td>
+                    <td><span style={{ fontWeight: 600, color: '#F59E0B' }}>{s.ltft}</span></td>
+                    <td>
+                      {s.dtcs === 0
+                        ? <span className="badge badge-green">Clear</span>
+                        : <span className="badge badge-red">{s.dtcs} code{s.dtcs > 1 ? 's' : ''}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </motion.div>
+
+          {/* MPG trend */}
+          <motion.div custom={8} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card">
+            <div className="chart-card-title">MPG Trend</div>
+            <div className="chart-card-sub">Session average fuel economy · 7 sessions</div>
+            <ResponsiveContainer width="100%" height={180}>
+              <AreaChart data={SESSION_DATA} margin={{ top: 5, right: 5, bottom: 5, left: -20 }}>
+                <defs>
+                  <linearGradient id="mpgGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.15}/>
+                    <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false}/>
+                <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false}/>
+                <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} domain={['auto','auto']}/>
+                <Tooltip content={<CustomTooltip/>}/>
+                <Area type="monotone" dataKey="mpg" name="MPG" stroke="#3B82F6" strokeWidth={2.5} fill="url(#mpgGrad)" dot={{ fill: '#3B82F6', r: 3 }}/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </motion.div>
+
+          {/* Quick actions */}
+          <motion.div custom={9} variants={FADE_UP} initial="hidden" animate="visible" className="chart-card">
+            <div className="chart-card-title">Quick Actions</div>
+            <div className="chart-card-sub">Common tasks</div>
+            <div className="quick-actions-grid">
+              {[
+                { icon: '⏺', label: 'Start Session', color: '#1E40AF', bg: '#EFF6FF', to: '/dashboard/capture' },
+                { icon: '📊', label: 'NeedleNest', color: '#8B5CF6', bg: '#EDE9FE', to: '/needlenest' },
+                { icon: '📤', label: 'Share Report', color: '#10B981', bg: '#ECFDF5', to: '/sharing' },
+                { icon: '🚗', label: 'Add Vehicle', color: '#F59E0B', bg: '#FFFBEB', to: '/vehicles' },
+              ].map((a, i) => (
+                <Link key={i} to={a.to} className="quick-action-btn" style={{ '--qa-color': a.color, '--qa-bg': a.bg }}>
+                  <div className="qa-icon" style={{ background: a.bg, color: a.color }}>{a.icon}</div>
+                  <span className="qa-label">{a.label}</span>
+                </Link>
+              ))}
+            </div>
+          </motion.div>
+        </div>
+      </main>
+    </div>
+  );
+}

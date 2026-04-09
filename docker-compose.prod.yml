@@ -1,0 +1,95 @@
+# Production Docker Compose for CM3588 Server
+# This file is for the CM3588 server (192.168.68.121)
+# It includes the web service for static file serving
+
+version: '3.8'
+
+services:
+  # Web service - Caddy for static file serving
+  # Note: Caddy runs as a system service on CM3588, not in Docker
+  # This service is for reference only - actual deployment uses system Caddy
+
+  # API service - FastAPI backend
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8765:8765"
+    environment:
+      - DATABASE_URL=postgresql://acty_user:acty_password@postgres:5432/acty_db
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      - ENVIRONMENT=production
+      - CORS_ORIGINS=https://acty-labs.com,https://www.acty-labs.com
+    depends_on:
+      - postgres
+    volumes:
+      - ./data:/app/data
+      - ./backend:/app
+    networks:
+      - acty-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=acty_db
+      - POSTGRES_USER=acty_user
+      - POSTGRES_PASSWORD=acty_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - acty-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acty_user -d acty_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Grafana for monitoring
+  grafana:
+    image: grafana/grafana:10.2.0
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    networks:
+      - acty-net
+    restart: unless-stopped
+
+  # pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:7.8
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@acty-labs.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    networks:
+      - acty-net
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  grafana_data:
+  pgadmin_data:
+
+networks:
+  acty-net:
+    driver: bridge

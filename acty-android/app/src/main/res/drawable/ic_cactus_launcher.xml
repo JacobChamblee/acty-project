@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cactus launcher icon — transparent background, white googly eyes.
+    108dp × 108dp adaptive icon safe zone: 72dp inner area (18dp inset each side).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- ── Cactus body (main column) ───────────────────────── -->
+    <path
+        android:fillColor="#2ECC71"
+        android:pathData="
+            M54,16
+            C40,16 30,26 30,40
+            L30,60
+            C30,70 38,78 48,78
+            L50,78
+            L50,94
+            C50,97 52,100 55,100
+            L59,100
+            C62,100 64,97 64,94
+            L64,78
+            L66,78
+            C76,78 84,70 84,60
+            L84,40
+            C84,26 74,16 60,16
+            Z" />
+
+    <!-- Cactus body shadow / depth -->
+    <path
+        android:fillColor="#27AE60"
+        android:pathData="
+            M54,16
+            C48,16 44,18 40,22
+            C44,24 48,26 54,26
+            C60,26 64,24 68,22
+            C64,18 60,16 54,16
+            Z" />
+
+    <!-- ── Left arm ─────────────────────────────────────────── -->
+    <path
+        android:fillColor="#2ECC71"
+        android:pathData="
+            M30,52
+            C30,42 24,36 16,36
+            C10,36 8,40 8,44
+            L8,56
+            C8,62 14,66 20,66
+            C26,66 30,62 30,58
+            Z" />
+
+    <!-- Left arm connection bump -->
+    <path
+        android:fillColor="#27AE60"
+        android:pathData="
+            M30,50 C28,48 26,47 24,47 C26,50 28,52 30,54 Z" />
+
+    <!-- ── Right arm ─────────────────────────────────────────── -->
+    <path
+        android:fillColor="#2ECC71"
+        android:pathData="
+            M84,52
+            C84,42 90,36 98,36
+            C104,36 106,40 106,44
+            L106,56
+            C106,62 100,66 94,66
+            C88,66 84,62 84,58
+            Z" />
+
+    <!-- Right arm connection bump -->
+    <path
+        android:fillColor="#27AE60"
+        android:pathData="
+            M84,50 C86,48 88,47 90,47 C88,50 86,52 84,54 Z" />
+
+    <!-- ── Cactus spines (left side) ───────────────────────── -->
+    <path
+        android:strokeColor="#1A8A45"
+        android:strokeWidth="1.5"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M30,44 L23,40"/>
+    <path
+        android:strokeColor="#1A8A45"
+        android:strokeWidth="1.5"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M30,50 L22,50"/>
+    <path
+        android:strokeColor="#1A8A45"
+        android:strokeWidth="1.5"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M30,56 L23,60"/>
+
+    <!-- ── Cactus spines (right side) ──────────────────────── -->
+    <path
+        android:strokeColor="#1A8A45"
+        android:strokeWidth="1.5"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M84,44 L91,40"/>
+    <path
+        android:strokeColor="#1A8A45"
+        android:strokeWidth="1.5"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M84,50 L92,50"/>
+    <path
+        android:strokeColor="#1A8A45"
+        android:strokeWidth="1.5"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M84,56 L91,60"/>
+
+    <!-- ── Cactus body spines (top) ─────────────────────────── -->
+    <path
+        android:strokeColor="#1A8A45"
+        android:strokeWidth="1.5"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M44,24 L40,18"/>
+    <path
+        android:strokeColor="#1A8A45"
+        android:strokeWidth="1.5"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M54,18 L54,12"/>
+    <path
+        android:strokeColor="#1A8A45"
+        android:strokeWidth="1.5"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M64,24 L68,18"/>
+
+    <!-- ── Googly eyes — white sclera ──────────────────────── -->
+    <!-- Left eye sclera -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,42 A6,6 0 1,1 52,42 A6,6 0 1,1 40,42"/>
+
+    <!-- Right eye sclera -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M62,42 A6,6 0 1,1 74,42 A6,6 0 1,1 62,42"/>
+
+    <!-- Left iris -->
+    <path
+        android:fillColor="#1A1A2E"
+        android:pathData="M42,43 A3.5,3.5 0 1,1 49,43 A3.5,3.5 0 1,1 42,43"/>
+
+    <!-- Right iris -->
+    <path
+        android:fillColor="#1A1A2E"
+        android:pathData="M64,43 A3.5,3.5 0 1,1 71,43 A3.5,3.5 0 1,1 64,43"/>
+
+    <!-- Left pupil highlight -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,41 A1.2,1.2 0 1,1 46.4,41 A1.2,1.2 0 1,1 44,41"/>
+
+    <!-- Right pupil highlight -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M66,41 A1.2,1.2 0 1,1 68.4,41 A1.2,1.2 0 1,1 66,41"/>
+
+    <!-- ── Smile ─────────────────────────────────────────────── -->
+    <path
+        android:strokeColor="#1A8A45"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M44,56 Q54,64 70,56"/>
+
+</vector>
