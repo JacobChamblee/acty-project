@@ -161,6 +161,26 @@ data class AccountSettings(
     val byokProvider: String = "",
 )
 
+// ── Oil Change / Maintenance ──────────────────────────────────────────────────
+
+enum class OilChangeUrgency { OK, MONITOR, DUE_SOON, OVERDUE }
+
+/**
+ * Mirrors the output of oil_interval_advisor.py status().
+ * In production, populated from the backend after session ingestion.
+ */
+data class OilChangeStatus(
+    val urgency:                  OilChangeUrgency = OilChangeUrgency.OK,
+    val pctThresholdUsed:         Int              = 0,    // 0–100
+    val equivMilesRemaining:      Int              = 5000, // equivalent severity-miles left
+    val actualMilesSinceChange:   Int              = 0,    // odometer miles
+    val impliedIntervalMi:        String           = "5,000–7,000 miles",
+    val drivingProfile:           String           = "Mixed suburban driving",
+    val avgSeverityMult:          Float            = 1.0f, // 1.0 = ideal highway
+    val dominantFactor:           String           = "baseline",
+    val recommendation:           String           = "",
+)
+
 // ── Sharing ───────────────────────────────────────────────────────────────────
 
 data class MechanicLink(

@@ -80,6 +80,19 @@ private val sampleInsights = listOf(
 private val sampleMpg  = MpgStats(city = 24.3f, highway = 31.8f, trend = MpgTrend.IMPROVING)
 private val sampleDtcs = listOf(DtcAlert("P0304", "Cylinder 4 misfire", DtcStatus.PENDING))
 
+// Mirrors oil_interval_advisor.py status() — populated from backend after session ingest
+private val sampleOilStatus = OilChangeStatus(
+    urgency                = OilChangeUrgency.MONITOR,
+    pctThresholdUsed       = 68,
+    equivMilesRemaining    = 1600,
+    actualMilesSinceChange = 3200,
+    impliedIntervalMi      = "5,000–7,000 miles",
+    drivingProfile         = "City / stop-and-go — elevated oil stress",
+    avgSeverityMult        = 1.9f,
+    dominantFactor         = "cold starts",
+    recommendation         = "Oil at ~68% of severity threshold. Primary factor: cold starts. ~1,600 equivalent miles remaining.",
+)
+
 // ── HomeScreen ────────────────────────────────────────────────────────────────
 
 @Composable
@@ -128,8 +141,10 @@ fun HomeScreen(
         Spacer(Modifier.height(20.dp))
 
         // ── Insights ─────────────────────────────────────────
-        SectionHeader(title = "Insights", subtitle = "${sampleInsights.size} active")
+        SectionHeader(title = "Insights", subtitle = "${sampleInsights.size + 1} active")
         Spacer(Modifier.height(10.dp))
+        OilChangeInsightCard(oil = sampleOilStatus)
+        Spacer(Modifier.height(8.dp))
         sampleInsights.forEach { insight ->
             InsightCard(insight = insight)
             Spacer(Modifier.height(8.dp))
@@ -673,6 +688,206 @@ fun InsightCard(insight: Insight) {
                     )
                 }
             }
+        }
+    }
+}
+
+// ── Oil Change Insight Card ───────────────────────────────────────────────────
+
+@Composable
+fun OilChangeInsightCard(oil: OilChangeStatus) {
+    val (accentColor, bgColor, borderColor, badgeLabel) = when (oil.urgency) {
+        OilChangeUrgency.OVERDUE   -> listOf(StatusRed,   StatusRedBg,   StatusRed.copy(alpha = 0.3f),   "Overdue")
+        OilChangeUrgency.DUE_SOON  -> listOf(StatusRed,   StatusRedBg,   StatusRed.copy(alpha = 0.3f),   "Due Soon")
+        OilChangeUrgency.MONITOR   -> listOf(StatusAmber, StatusAmberBg, StatusAmber.copy(alpha = 0.3f), "Monitor")
+        OilChangeUrgency.OK        -> listOf(StatusGreen, StatusGreenBg, StatusGreenDim.copy(alpha = 0.3f), "Good")
+    }
+    @Suppress("UNCHECKED_CAST")
+    val accent  = accentColor  as Color
+    val bg      = bgColor      as Color
+    val border  = borderColor  as Color
+    val badge   = badgeLabel   as String
+
+    val animPct by animateFloatAsState(
+        targetValue   = oil.pctThresholdUsed / 100f,
+        animationSpec = tween(900, easing = FastOutSlowInEasing),
+        label         = "oilPct",
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .shadow(4.dp, RoundedCornerShape(14.dp), spotColor = accent.copy(alpha = 0.10f))
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .border(0.5.dp, border, RoundedCornerShape(14.dp))
+            .padding(16.dp),
+    ) {
+        Column {
+            // Header row
+            Row(
+                modifier              = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment     = Alignment.CenterVertically,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(accent.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector        = Icons.Outlined.OilBarrel,
+                            contentDescription = "Oil Change",
+                            tint               = accent,
+                            modifier           = Modifier.size(18.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text  = "Oil Change Estimate",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                color      = TextPrimary,
+                                fontWeight = FontWeight.Bold,
+                            ),
+                        )
+                        Text(
+                            text  = "Severity-weighted · actual PID data",
+                            style = MaterialTheme.typography.labelSmall.copy(color = TextDim),
+                        )
+                    }
+                }
+                Text(
+                    text  = badge,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color      = accent,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(100.dp))
+                        .background(accent.copy(alpha = 0.12f))
+                        .border(0.5.dp, accent.copy(alpha = 0.35f), RoundedCornerShape(100.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                )
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            // Progress bar
+            Row(
+                modifier              = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text  = "Oil Life Used",
+                    style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary),
+                )
+                Text(
+                    text  = "${oil.pctThresholdUsed}%",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color      = accent,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(7.dp)
+                    .clip(RoundedCornerShape(100.dp))
+                    .background(Color(0xFFE2E8F0)),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(animPct)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(100.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(accent.copy(alpha = 0.6f), accent)
+                            )
+                        ),
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Stats grid
+            Row(
+                modifier              = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf(
+                    "Since change" to "${oil.actualMilesSinceChange.toLocaleString()} mi",
+                    "Est. remaining" to "${oil.equivMilesRemaining.toLocaleString()} eq. mi",
+                ).forEach { (label, value) ->
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.White.copy(alpha = 0.65f))
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                    ) {
+                        Text(label, style = MaterialTheme.typography.labelSmall.copy(color = TextDim))
+                        Spacer(Modifier.height(2.dp))
+                        Text(value, style = MaterialTheme.typography.labelMedium.copy(
+                            color      = TextPrimary,
+                            fontWeight = FontWeight.Bold,
+                        ))
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            Row(
+                modifier              = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf(
+                    "Severity" to "${oil.avgSeverityMult}× vs. ideal",
+                    "Top factor" to oil.dominantFactor,
+                ).forEach { (label, value) ->
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.White.copy(alpha = 0.65f))
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                    ) {
+                        Text(label, style = MaterialTheme.typography.labelSmall.copy(color = TextDim))
+                        Spacer(Modifier.height(2.dp))
+                        Text(value, style = MaterialTheme.typography.labelMedium.copy(
+                            color      = TextPrimary,
+                            fontWeight = FontWeight.Bold,
+                        ))
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // Implied interval footer
+            Text(
+                text  = "Implied interval for your driving style: ${oil.impliedIntervalMi}",
+                style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+            )
+        }
+    }
+}
+
+// Helper — Int.toLocaleString for Kotlin (no java.text dependency needed)
+private fun Int.toLocaleString(): String {
+    val s = this.toString()
+    return buildString {
+        s.forEachIndexed { i, c ->
+            if (i > 0 && (s.length - i) % 3 == 0) append(',')
+            append(c)
         }
     }
 }

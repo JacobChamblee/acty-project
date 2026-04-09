@@ -80,6 +80,13 @@
 }
 .sidebar-capture-btn:hover { box-shadow: 0 6px 20px rgba(59,130,246,0.40); transform: translateY(-1px); }
 
+/* Oil change card */
+.oil-change-card {
+  display: flex; flex-direction: column; gap: 0;
+  padding: 1rem 1.125rem; margin-bottom: 0.75rem;
+  border-radius: 12px; border: 1px solid;
+}
+
 /* Responsive */
 @media (max-width: 1100px) {
   .dash-main-grid { grid-template-columns: 1fr; }
