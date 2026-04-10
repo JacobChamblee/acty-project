@@ -9,6 +9,7 @@ import './Dashboard.css';
 const NAV_ITEMS = [
   { icon: '🏠', label: 'Dashboard',  path: '/dashboard' },
   { icon: '📊', label: 'NeedleNest', path: '/needlenest' },
+  { icon: '🤖', label: 'Insights',   path: '/insights' },
   { icon: '🚗', label: 'Vehicles',   path: '/vehicles' },
   { icon: '📤', label: 'Sharing',    path: '/sharing' },
 ];
@@ -18,13 +19,13 @@ export function Sidebar() {
   return (
     <div className="sidebar">
       <div className="sidebar-section-label">Main</div>
-      {NAV_ITEMS.slice(0, 2).map(n => (
+      {NAV_ITEMS.slice(0, 3).map(n => (
         <Link key={n.path} to={n.path} className={`sidebar-nav-item ${loc.pathname === n.path ? 'active' : ''}`}>
           <span>{n.icon}</span> {n.label}
         </Link>
       ))}
       <div className="sidebar-section-label">Manage</div>
-      {NAV_ITEMS.slice(2).map(n => (
+      {NAV_ITEMS.slice(3).map(n => (
         <Link key={n.path} to={n.path} className={`sidebar-nav-item ${loc.pathname === n.path ? 'active' : ''}`}>
           <span>{n.icon}</span> {n.label}
         </Link>

@@ -9,6 +9,7 @@ import Landing from './pages/Landing';
 import { LoginPage, RegisterPage } from './pages/Auth';
 import Dashboard from './pages/Dashboard';
 import NeedleNest from './pages/NeedleNest';
+import Insights from './pages/Insights';
 import About from './pages/About';
 import Vehicles from './pages/Vehicles';
 import Settings from './pages/Settings';
@@ -46,7 +47,7 @@ function Navbar() {
   const navigate = useNavigate();
   const { user, activeVehicle, logout } = useUser();
   const [menuOpen, setMenuOpen] = React.useState(false);
-  const isDash = ['/dashboard', '/needlenest', '/vehicles', '/sharing', '/settings'].some(p => loc.pathname.startsWith(p));
+  const isDash = ['/dashboard', '/needlenest', '/insights', '/vehicles', '/sharing', '/settings'].some(p => loc.pathname.startsWith(p));
   const isAuth = loc.pathname === '/login' || loc.pathname === '/register';
   if (isAuth) return null;
 
@@ -138,7 +139,7 @@ function Navbar() {
 // ── Shared Footer ─────────────────────────────────────────────────────────────
 function Footer() {
   const loc = useLocation();
-  const hide = ['/dashboard', '/needlenest', '/vehicles', '/sharing', '/settings', '/login', '/register'].some(p => loc.pathname.startsWith(p));
+  const hide = ['/dashboard', '/needlenest', '/insights', '/vehicles', '/sharing', '/settings', '/login', '/register'].some(p => loc.pathname.startsWith(p));
   if (hide) return null;
   return (
     <footer className="footer">
@@ -210,6 +211,7 @@ function AppRoutes() {
           <Route path="/about" element={<PageWrap><About/></PageWrap>}/>
           <Route path="/dashboard" element={<PageWrap><div className="page-content"><Dashboard/></div></PageWrap>}/>
           <Route path="/needlenest" element={<PageWrap><div className="page-content"><NeedleNest/></div></PageWrap>}/>
+          <Route path="/insights" element={<PageWrap><div className="page-content"><Insights/></div></PageWrap>}/>
           <Route path="/vehicles" element={<PageWrap><div className="page-content"><Vehicles/></div></PageWrap>}/>
           <Route path="/sharing" element={<PageWrap><div className="page-content"><Dashboard/></div></PageWrap>}/>
           <Route path="/settings" element={<PageWrap><div className="page-content"><Settings/></div></PageWrap>}/>

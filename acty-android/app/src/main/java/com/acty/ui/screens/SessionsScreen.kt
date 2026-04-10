@@ -39,6 +39,7 @@ import java.io.File
 fun SessionsScreen(
     viewModel: SessionViewModel,
     onShare:   (String) -> Unit,
+    onAnalyze: (String) -> Unit = {},   // filename → InsightsScreen
 ) {
     val context      = LocalContext.current
     val scope        = rememberCoroutineScope()
@@ -112,9 +113,10 @@ fun SessionsScreen(
             ) {
                 items(sessions, key = { it.sessionId }) { session ->
                     SessionRow(
-                        session  = session,
-                        onShare  = { onShare(session.sessionId) },
-                        onExport = {
+                        session   = session,
+                        onAnalyze = { onAnalyze(session.fileName) },
+                        onShare   = { onShare(session.sessionId) },
+                        onExport  = {
                             // Export CSV + .sig via Android share sheet
                             val csvFile = File(syncManager.dataDir, session.fileName)
                             val sigFile = File(syncManager.dataDir, session.fileName.replace(".csv", ".sig"))
@@ -291,7 +293,7 @@ fun MiniStatCard(label: String, value: String, color: Color, modifier: Modifier 
 // ── Session Row ───────────────────────────────────────────────────────────────
 
 @Composable
-fun SessionRow(session: SessionSummary, onShare: () -> Unit, onExport: () -> Unit) {
+fun SessionRow(session: SessionSummary, onAnalyze: () -> Unit = {}, onShare: () -> Unit, onExport: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
 
     Box(
@@ -355,7 +357,7 @@ fun SessionRow(session: SessionSummary, onShare: () -> Unit, onExport: () -> Uni
                         SessionAction(
                             icon     = Icons.Outlined.Analytics,
                             label    = "Analyze",
-                            onClick  = { /* NeedleNest deep-link — future */ },
+                            onClick  = onAnalyze,
                             modifier = Modifier.weight(1f),
                         )
                         SessionAction(

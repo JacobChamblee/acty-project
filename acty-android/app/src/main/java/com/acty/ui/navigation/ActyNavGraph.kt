@@ -8,10 +8,13 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.acty.ui.SessionViewModel
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import com.acty.ui.screens.AboutScreen
 import com.acty.ui.screens.AccountScreen
 import com.acty.ui.screens.CaptureScreen
 import com.acty.ui.screens.HomeScreen
+import com.acty.ui.screens.InsightsScreen
 import com.acty.ui.screens.LoginScreen
 import com.acty.ui.screens.NeedleNestScreen
 import com.acty.ui.screens.RegisterScreen
@@ -29,6 +32,9 @@ sealed class Screen(val route: String) {
     object About      : Screen("about")
     object Sharing    : Screen("sharing/{sessionId}") {
         fun go(sessionId: String) = "sharing/$sessionId"
+    }
+    object Insights   : Screen("insights/{filename}") {
+        fun go(filename: String) = "insights/${android.net.Uri.encode(filename)}"
     }
 }
 
@@ -98,8 +104,19 @@ fun ActyNavHost(
         }
         composable(Screen.Sessions.route) {
             SessionsScreen(
-                viewModel = sessionViewModel,
-                onShare   = { id -> navController.navigate(Screen.Sharing.go(id)) },
+                viewModel    = sessionViewModel,
+                onShare      = { id -> navController.navigate(Screen.Sharing.go(id)) },
+                onAnalyze    = { filename -> navController.navigate(Screen.Insights.go(filename)) },
+            )
+        }
+        composable(
+            route     = Screen.Insights.route,
+            arguments = listOf(navArgument("filename") { type = NavType.StringType }),
+        ) { backStack ->
+            val filename = backStack.arguments?.getString("filename") ?: ""
+            InsightsScreen(
+                sessionFilename = filename,
+                onBack          = { navController.popBackStack() },
             )
         }
         composable(Screen.Account.route) {
