@@ -92,6 +92,9 @@ dependencies {
     // OkHttp for upload to acty-api
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // Chrome Custom Tabs — used for Supabase Google OAuth redirect flow
+    implementation("androidx.browser:browser:1.8.0")
+
     // Encrypted SharedPreferences for BYOK key storage
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 

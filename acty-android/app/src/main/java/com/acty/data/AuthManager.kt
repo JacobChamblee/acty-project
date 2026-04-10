@@ -2,6 +2,8 @@ package com.acty.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.Uri
+import androidx.browser.customtabs.CustomTabsIntent
 import com.acty.ActyConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +36,8 @@ data class UserAccount(
     val alertServiceEnabled:  Boolean = true,
     val alertChargingEnabled: Boolean = true,
     val ltftAlertThreshold:   Float   = 7.5f,
+    val provider:             String  = "",   // "" = email/password, "google" = OAuth
+    val avatarUrl:            String  = "",
 )
 
 sealed class AuthResult {
@@ -122,6 +126,8 @@ class AuthManager(private val context: Context) {
             alertServiceEnabled  = o.optBoolean("alertServiceEnabled",  true),
             alertChargingEnabled = o.optBoolean("alertChargingEnabled", true),
             ltftAlertThreshold   = o.optDouble("ltftAlertThreshold",    7.5).toFloat(),
+            provider             = o.optString("provider",             ""),
+            avatarUrl            = o.optString("avatarUrl",            ""),
         )
     }
 
@@ -144,6 +150,8 @@ class AuthManager(private val context: Context) {
             put("alertServiceEnabled",  a.alertServiceEnabled)
             put("alertChargingEnabled", a.alertChargingEnabled)
             put("ltftAlertThreshold",   a.ltftAlertThreshold.toDouble())
+            put("provider",             a.provider)
+            put("avatarUrl",            a.avatarUrl)
         }
     }
 
@@ -399,6 +407,61 @@ class AuthManager(private val context: Context) {
 
         persistAccount(savedAccount)
         return AuthResult.Success
+    }
+
+    // ── Google OAuth via Chrome Custom Tabs ───────────────────────────────────
+
+    fun loginWithGoogle(context: Context) {
+        val url = "${ActyConfig.SUPABASE_URL}/auth/v1/authorize" +
+            "?provider=google" +
+            "&redirect_to=${Uri.encode(ActyConfig.OAUTH_REDIRECT)}"
+        CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(url))
+    }
+
+    /** Called from MainActivity.onNewIntent with the deep-link URI. Returns true on success. */
+    suspend fun handleOAuthCallback(uri: Uri): Boolean = withContext(Dispatchers.IO) {
+        // Supabase puts tokens in the URL fragment: #access_token=...&token_type=bearer&...
+        val fragment = uri.fragment ?: return@withContext false
+        val params = fragment.split("&").associate {
+            val pair = it.split("=", limit = 2)
+            (pair.getOrNull(0) ?: "") to (pair.getOrNull(1) ?: "")
+        }
+        val accessToken = params["access_token"] ?: return@withContext false
+
+        // Fetch user info from Supabase
+        try {
+            val request = Request.Builder()
+                .url("${ActyConfig.SUPABASE_URL}/auth/v1/user")
+                .header("Authorization", "Bearer $accessToken")
+                .header("apikey", ActyConfig.SUPABASE_ANON_KEY)
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val body = JSONObject(response.body?.string() ?: return@withContext false)
+                val email = body.optString("email", "").lowercase()
+                if (email.isEmpty()) return@withContext false
+
+                val meta = body.optJSONObject("user_metadata") ?: JSONObject()
+                val fullName = meta.optString("full_name", meta.optString("name", "")).ifEmpty { email }
+                val avatarUrl = meta.optString("avatar_url", "")
+
+                // Merge with any existing local account (preserve vehicles / settings)
+                val existing = getAccount(email)
+                val account = (existing ?: UserAccount(
+                    username    = fullName,
+                    displayName = fullName,
+                    email       = email,
+                )).copy(
+                    displayName = fullName,
+                    provider    = "google",
+                    avatarUrl   = avatarUrl,
+                )
+
+                persistAccount(account)
+                true
+            }
+        } catch (_: Exception) { false }
     }
 
     fun logout() {

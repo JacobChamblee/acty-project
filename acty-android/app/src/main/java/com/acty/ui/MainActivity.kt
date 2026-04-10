@@ -7,6 +7,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import androidx.lifecycle.lifecycleScope
+import com.acty.ActyConfig
+import com.acty.data.AuthManager
+import kotlinx.coroutines.launch
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -98,6 +102,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() { super.onStart(); viewModel.bindService(this) }
     override fun onStop()  { super.onStop();  viewModel.unbindService(this) }
+
+    /** Receives the OAuth deep link after Chrome Custom Tab redirects back to the app. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val uri = intent.data ?: return
+        if (!uri.toString().startsWith(ActyConfig.OAUTH_REDIRECT)) return
+        lifecycleScope.launch {
+            val success = AuthManager(this@MainActivity).handleOAuthCallback(uri)
+            if (success) recreate()   // restart so startDestination re-evaluates to Home
+        }
+    }
 
     private fun ensureBluetooth() {
         val needed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

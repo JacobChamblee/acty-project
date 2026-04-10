@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -180,7 +181,37 @@ fun LoginScreen(
                 }
             }
 
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(20.dp))
+
+            // ── Divider ────────────────────────────────────────
+            Row(
+                modifier            = Modifier.fillMaxWidth(),
+                verticalAlignment   = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                HorizontalDivider(modifier = Modifier.weight(1f), color = BgBorder)
+                Text("or", style = MaterialTheme.typography.bodySmall.copy(color = TextDim))
+                HorizontalDivider(modifier = Modifier.weight(1f), color = BgBorder)
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // ── Google sign-in ─────────────────────────────────
+            OutlinedButton(
+                onClick  = { auth.loginWithGoogle(context) },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape    = RoundedCornerShape(13.dp),
+                border   = androidx.compose.foundation.BorderStroke(1.dp, BgBorder),
+            ) {
+                Text(
+                    "G   Continue with Google",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize   = 15.sp,
+                    color      = TextPrimary,
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
 
             // Register link
             Row(

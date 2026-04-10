@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -138,7 +139,37 @@ fun RegisterScreen(
                 "Free forever. No credit card.",
                 style = MaterialTheme.typography.bodyMedium.copy(color = TextDim),
             )
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(24.dp))
+
+            // ── Google sign-up ─────────────────────────────────
+            OutlinedButton(
+                onClick  = { auth.loginWithGoogle(context) },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape    = RoundedCornerShape(13.dp),
+                border   = androidx.compose.foundation.BorderStroke(1.dp, BgBorder),
+            ) {
+                Text(
+                    "G   Continue with Google",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize   = 15.sp,
+                    color      = TextPrimary,
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // ── Divider ────────────────────────────────────────
+            Row(
+                modifier              = Modifier.fillMaxWidth(),
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                HorizontalDivider(modifier = Modifier.weight(1f), color = BgBorder)
+                Text("or register with email", style = MaterialTheme.typography.bodySmall.copy(color = TextDim))
+                HorizontalDivider(modifier = Modifier.weight(1f), color = BgBorder)
+            }
+
+            Spacer(Modifier.height(16.dp))
 
             // ── Account fields ─────────────────────────────────
             Surface(

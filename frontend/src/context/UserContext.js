@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { syncProfileToBackend } from '../authApi';
+import { API_BASE } from '../config';
 
 const UserContext = createContext(null);
 
@@ -58,14 +59,45 @@ function accountFromSupabaseUser(sbUser) {
 }
 
 // ── Apply a Supabase user into the local registry + React state ───────────────
-function applySupabaseUser(sbUser, setUserRaw) {
+// If no local account exists, fetches from the backend first so that vehicles
+// added on another device/browser are restored before setting state.
+async function applySupabaseUser(sbUser, setUserRaw) {
   const email    = sbUser.email.toLowerCase();
   const accounts = loadAccounts();
-  // Preserve existing vehicle/prefs data if the account already exists locally
+
   if (!accounts[email]) {
-    accounts[email] = accountFromSupabaseUser(sbUser);
-    saveAccounts(accounts);
+    // Attempt to restore saved profile from the API backend
+    let restored = false;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        const resp = await fetch(`${API_BASE}/api/v1/auth/me`, {
+          headers: { 'Authorization': `Bearer ${session.access_token}` },
+        });
+        if (resp.ok) {
+          const json = await resp.json();
+          const backendAccount = json?.account;
+          // Only use backend data if it has meaningful content beyond a bare stub
+          if (backendAccount && (backendAccount.vehicles?.length > 0 || backendAccount.username)) {
+            accounts[email] = {
+              ...accountFromSupabaseUser(sbUser),
+              ...backendAccount,
+              email,
+              avatarUrl: sbUser.user_metadata?.avatar_url || backendAccount.avatarUrl || null,
+            };
+            saveAccounts(accounts);
+            restored = true;
+          }
+        }
+      }
+    } catch (_) { /* network error — fall through to fresh account */ }
+
+    if (!restored) {
+      accounts[email] = accountFromSupabaseUser(sbUser);
+      saveAccounts(accounts);
+    }
   }
+
   saveCurrentEmail(email);
   setUserRaw(accounts[email]);
 }
@@ -162,6 +194,8 @@ export const authStore = {
 export function UserProvider({ children }) {
   const [user, setUserRaw] = useState(loadInitialUser);
   const [hasHydratedRemote, setHasHydratedRemote] = useState(false);
+  // Tracks the user object at hydration time so we can skip syncing on initial load
+  const hydratedUserRef = useRef(undefined);
 
   // ── Supabase session listener ─────────────────────────────────────────────
   useEffect(() => {
@@ -183,11 +217,18 @@ export function UserProvider({ children }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ── Sync profile to FastAPI backend after hydration ───────────────────────
+  // ── Sync profile to FastAPI backend after user-initiated changes ─────────
+  // We intentionally skip the first fire (hydration) to avoid overwriting
+  // backend data with a stale local snapshot on login from a new device.
   useEffect(() => {
-    if (hasHydratedRemote && user?.email) {
-      void syncProfileToBackend(user);
+    if (!hasHydratedRemote || !user?.email) return;
+    if (hydratedUserRef.current === undefined) {
+      // Record the user object at hydration time — don't sync it
+      hydratedUserRef.current = user;
+      return;
     }
+    if (user === hydratedUserRef.current) return; // unchanged
+    void syncProfileToBackend(user);
   }, [hasHydratedRemote, user]);
 
   // Write to registry + update session pointer + local state

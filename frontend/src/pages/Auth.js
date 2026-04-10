@@ -56,21 +56,11 @@ function GoogleLogo() {
   );
 }
 
-// ── Facebook SVG logo ─────────────────────────────────────────────────────────
-function FacebookLogo() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-      <path fill="#1877F2" d="M24 12.073C24 5.4 18.627 0 12 0S0 5.4 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.413c0-3.025 1.792-4.697 4.533-4.697 1.313 0 2.686.236 2.686.236v2.97h-1.513c-1.491 0-1.956.93-1.956 1.886v2.267h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
-    </svg>
-  );
-}
-
 // ── Login ─────────────────────────────────────────────────────────────────────
 export function LoginPage() {
   const [form, setForm]       = useState({ email: '', password: '' });
   const [loading, setLoading] = useState(false);
   const [gLoading, setGLoad]  = useState(false);
-  const [fbLoading, setFbLoad]= useState(false);
   const [error, setError]     = useState('');
   const navigate              = useNavigate();
 
@@ -80,7 +70,6 @@ export function LoginPage() {
     setLoading(true);
     try {
       await signIn(form.email, form.password);
-      // onAuthStateChange in UserContext will set the user state
       navigate('/dashboard');
     } catch (err) {
       setError(err.message || 'Sign in failed. Check your email and password.');
@@ -94,21 +83,9 @@ export function LoginPage() {
     setGLoad(true);
     try {
       await signInWithProvider('google');
-      // User is redirected away — /auth/callback handles the rest
     } catch (err) {
       setError(err.message || 'Google sign-in failed.');
       setGLoad(false);
-    }
-  };
-
-  const handleFacebookClick = async () => {
-    setError('');
-    setFbLoad(true);
-    try {
-      await signInWithProvider('facebook');
-    } catch (err) {
-      setError(err.message || 'Facebook sign-in failed.');
-      setFbLoad(false);
     }
   };
 
@@ -126,10 +103,6 @@ export function LoginPage() {
             <button className="auth-provider-btn auth-provider-google" onClick={handleGoogleClick} disabled={gLoading}>
               {gLoading ? <span className="auth-spinner auth-spinner-dark"/> : <GoogleLogo/>}
               Continue with Google
-            </button>
-            <button className="auth-provider-btn auth-provider-fb" onClick={handleFacebookClick} disabled={fbLoading}>
-              {fbLoading ? <span className="auth-spinner"/> : <FacebookLogo/>}
-              Continue with Facebook
             </button>
           </div>
 
@@ -183,7 +156,6 @@ export function RegisterPage() {
   });
   const [loading, setLoading] = useState(false);
   const [gLoading, setGLoad]  = useState(false);
-  const [fbLoading, setFbLoad]= useState(false);
   const [error, setError]     = useState('');
   const navigate              = useNavigate();
 
@@ -195,17 +167,6 @@ export function RegisterPage() {
     } catch (err) {
       setError(err.message || 'Google sign-in failed.');
       setGLoad(false);
-    }
-  };
-
-  const handleFacebookClick = async () => {
-    setError('');
-    setFbLoad(true);
-    try {
-      await signInWithProvider('facebook');
-    } catch (err) {
-      setError(err.message || 'Facebook sign-in failed.');
-      setFbLoad(false);
     }
   };
 
@@ -243,8 +204,6 @@ export function RegisterPage() {
 
     const email = form.email.toLowerCase();
 
-    // Pre-populate local profile with vehicle/prefs data so it's ready when
-    // onAuthStateChange fires (or when the user confirms their email later).
     const localAccount = {
       username:        form.username,
       displayName:     form.username,
@@ -264,10 +223,8 @@ export function RegisterPage() {
       });
 
       if (data.session) {
-        // Email confirmation disabled — session is live immediately
         navigate('/dashboard');
       } else {
-        // Email confirmation required — user must click the link in their inbox
         setError('Almost there! Check your email and click the confirmation link to activate your account.');
         setLoading(false);
       }
@@ -288,7 +245,6 @@ export function RegisterPage() {
       <div className="auth-form-panel">
         <motion.div className="auth-form-wrap" variants={FADE_UP} initial="hidden" animate="visible">
 
-          {/* Step indicators */}
           <div className="auth-steps">
             {[1,2,3].map(s => (
               <div key={s} className={`auth-step ${step >= s ? 'active' : ''} ${step > s ? 'done' : ''}`}>
@@ -307,17 +263,12 @@ export function RegisterPage() {
             </p>
           </div>
 
-          {/* Social sign-up — only on step 1 */}
           {step === 1 && (
             <>
               <div className="auth-providers">
                 <button className="auth-provider-btn auth-provider-google" onClick={handleGoogleClick} disabled={gLoading}>
                   {gLoading ? <span className="auth-spinner auth-spinner-dark"/> : <GoogleLogo/>}
                   Continue with Google
-                </button>
-                <button className="auth-provider-btn auth-provider-fb" onClick={handleFacebookClick} disabled={fbLoading}>
-                  {fbLoading ? <span className="auth-spinner"/> : <FacebookLogo/>}
-                  Continue with Facebook
                 </button>
               </div>
               <div className="divider">or create with email</div>
@@ -327,7 +278,6 @@ export function RegisterPage() {
           {error && <div className="auth-error">{error}</div>}
 
           <form onSubmit={handleNext} className="auth-form">
-            {/* ── Step 1: Account ── */}
             {step === 1 && (
               <>
                 <div className="form-group">
@@ -353,7 +303,6 @@ export function RegisterPage() {
               </>
             )}
 
-            {/* ── Step 2: Region ── */}
             {step === 2 && (
               <div className="form-group">
                 <label className="form-label">Region</label>
@@ -368,7 +317,6 @@ export function RegisterPage() {
               </div>
             )}
 
-            {/* ── Step 3: Vehicle ── */}
             {step === 3 && (
               <>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
