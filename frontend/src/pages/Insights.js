@@ -61,6 +61,10 @@ export default function Insights() {
   const responseRef = useRef(null);
   const readerRef = useRef(null);
 
+  // History
+  const [history, setHistory]           = useState([]);
+  const [historyOpen, setHistoryOpen]   = useState(false);
+
   // ── Data fetching ────────────────────────────────────────────────────────────
   useEffect(() => {
     fetch(`${API_BASE}/sessions`)
@@ -86,6 +90,24 @@ export default function Insights() {
       .catch(() => setModelsError('Ollama server unreachable. Make sure it is running.'))
       .finally(() => setModelsLoading(false));
   }, []);
+
+  // Fetch history when selected session changes
+  useEffect(() => {
+    if (!selectedSession) { setHistory([]); return; }
+    fetch(`${API_BASE}/api/v1/ollama/history/${encodeURIComponent(selectedSession)}`)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(data => setHistory(data.analyses || []))
+      .catch(() => setHistory([]));
+  }, [selectedSession]);
+
+  // Refresh history after a new analysis completes
+  const refreshHistory = useCallback(() => {
+    if (!selectedSession) return;
+    fetch(`${API_BASE}/api/v1/ollama/history/${encodeURIComponent(selectedSession)}`)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(data => setHistory(data.analyses || []))
+      .catch(() => {});
+  }, [selectedSession]);
 
   // Auto-scroll response as tokens arrive
   useEffect(() => {
@@ -141,6 +163,7 @@ export default function Insights() {
 
           if (data === '[DONE]') {
             setStreaming(false);
+            refreshHistory();
             return;
           }
           if (data.startsWith('[ERROR]')) {
@@ -164,7 +187,7 @@ export default function Insights() {
     } finally {
       setStreaming(false);
     }
-  }, [selectedModel, selectedSession, question, streaming]);
+  }, [selectedModel, selectedSession, question, streaming, refreshHistory]);
 
   const handleStop = () => {
     readerRef.current?.cancel();
@@ -353,6 +376,40 @@ export default function Insights() {
                 </div>
               )}
             </div>
+
+            {/* Past analyses */}
+            {history.length > 0 && (
+              <div className="ins-history">
+                <button
+                  className="ins-history-toggle"
+                  onClick={() => setHistoryOpen(o => !o)}
+                >
+                  <span>Past analyses ({history.length})</span>
+                  <span>{historyOpen ? '▲' : '▼'}</span>
+                </button>
+                {historyOpen && (
+                  <div className="ins-history-list">
+                    {history.map(item => (
+                      <div key={item.id} className="ins-history-item">
+                        <div className="ins-history-meta">
+                          <span className="ins-history-model">{item.model}</span>
+                          <span className="ins-history-date">
+                            {new Date(item.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="ins-history-q">{item.question}</div>
+                        <pre className="ins-history-response">{item.response_text}</pre>
+                        {item.alerts?.length > 0 && (
+                          <div className="ins-alerts-row" style={{ marginTop: '0.5rem' }}>
+                            {item.alerts.map((a, i) => <AlertBadge key={i} text={a} />)}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
           </section>
         </div>

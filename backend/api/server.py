@@ -116,7 +116,7 @@ from api.routers.llm_config import router as llm_config_router
 from api.routers.insights import router as insights_router
 from api.routers.auth import router as auth_router
 from api.routers.ollama_router import router as ollama_router
-from api.storage.truenas_writer import archive_session, archive_report
+from api.storage.truenas_writer import archive_session, archive_report, archive_csv
 
 app.include_router(llm_config_router)
 app.include_router(insights_router)
@@ -859,12 +859,17 @@ async def upload_csv(file: UploadFile = File(...)):
     if len(df) < 5:
         raise HTTPException(422, "CSV has too few rows to analyse.")
 
+    # Save CSV to disk so Ollama analysis and /sessions endpoints can find it
+    csv_path = CSV_DIR / file.filename
+    csv_path.write_bytes(contents)
+
     report = _compute_trip_report(df, file.filename)
 
-    # Persist to DB if available (fire-and-forget)
+    # Persist to DB and cold storage (fire-and-forget)
     summary = summarize_session(df, Path(file.filename))
     alerts  = detect_anomalies(df)
     asyncio.create_task(_persist_session(summary, alerts, report["health_score"]))
+    asyncio.create_task(archive_csv(file.filename, contents))
 
     return report
 

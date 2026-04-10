@@ -16,15 +16,20 @@ The backend reaches it at OLLAMA_BASE_URL (defaults to that address).
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Optional
 
+import asyncpg
 import httpx
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+log = logging.getLogger(__name__)
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 router = APIRouter(prefix="/api/v1/ollama", tags=["ollama"])
 
@@ -272,6 +277,9 @@ async def analyze_session(body: AnalyzeRequest):
         }
         yield f"data: {json.dumps(meta)}\n\n"
 
+        tokens: list[str] = []
+        error_occurred = False
+
         try:
             timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -282,7 +290,7 @@ async def analyze_session(body: AnalyzeRequest):
                         body_bytes = await resp.aread()
                         msg = body_bytes[:300].decode(errors="replace")
                         yield f"data: [ERROR] Ollama returned HTTP {resp.status_code}: {msg}\n\n"
-                        yield "data: [DONE]\n\n"
+                        error_occurred = True
                         return
 
                     async for line in resp.aiter_lines():
@@ -295,6 +303,7 @@ async def analyze_session(body: AnalyzeRequest):
 
                         token = chunk.get("response", "")
                         if token:
+                            tokens.append(token)
                             # Escape embedded newlines so SSE framing is preserved
                             yield f"data: {token.replace(chr(10), '\\n')}\n\n"
 
@@ -302,13 +311,41 @@ async def analyze_session(body: AnalyzeRequest):
                             break
 
         except httpx.ConnectError:
+            error_occurred = True
             yield f"data: [ERROR] Cannot reach Ollama at {OLLAMA_BASE}. Is it running?\n\n"
         except httpx.ReadTimeout:
+            error_occurred = True
             yield "data: [ERROR] Ollama timed out. Try a smaller/faster model.\n\n"
         except Exception as exc:
+            error_occurred = True
             yield f"data: [ERROR] {str(exc)[:300]}\n\n"
         finally:
             yield "data: [DONE]\n\n"
+
+        # Persist completed analysis to DB (fire-and-forget, after stream closes)
+        if not error_occurred and tokens and DATABASE_URL:
+            try:
+                conn = await asyncpg.connect(DATABASE_URL)
+                try:
+                    await conn.execute(
+                        """
+                        INSERT INTO ollama_analyses
+                            (session_filename, question, model, response_text, alerts,
+                             sample_count, duration_min)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        """,
+                        stats["filename"],
+                        body.question,
+                        body.model,
+                        "".join(tokens),
+                        stats["alerts"] or [],
+                        stats["sample_count"],
+                        stats["duration_min"],
+                    )
+                finally:
+                    await conn.close()
+            except Exception as exc:
+                log.warning("[ollama] failed to persist analysis: %s", exc)
 
     return StreamingResponse(
         event_stream(),
@@ -319,3 +356,48 @@ async def analyze_session(body: AnalyzeRequest):
             "Connection":       "keep-alive",
         },
     )
+
+
+@router.get("/history/{filename:path}", summary="Past Ollama analyses for a session")
+async def analysis_history(filename: str, limit: int = 10):
+    """
+    Returns the most recent Ollama analyses for the given session filename.
+    filename is URL-decoded automatically by FastAPI.
+    """
+    if not DATABASE_URL:
+        return {"analyses": []}
+    try:
+        conn = await asyncpg.connect(DATABASE_URL)
+        try:
+            rows = await conn.fetch(
+                """
+                SELECT id, question, model, response_text, alerts,
+                       sample_count, duration_min, created_at
+                FROM ollama_analyses
+                WHERE session_filename = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+                """,
+                filename,
+                limit,
+            )
+            return {
+                "filename": filename,
+                "analyses": [
+                    {
+                        "id":            str(r["id"]),
+                        "question":      r["question"],
+                        "model":         r["model"],
+                        "response_text": r["response_text"],
+                        "alerts":        list(r["alerts"] or []),
+                        "sample_count":  r["sample_count"],
+                        "duration_min":  float(r["duration_min"]) if r["duration_min"] else None,
+                        "created_at":    r["created_at"].isoformat(),
+                    }
+                    for r in rows
+                ],
+            }
+        finally:
+            await conn.close()
+    except Exception as exc:
+        raise HTTPException(500, f"Database error: {exc}")

@@ -103,6 +103,22 @@ CREATE TABLE IF NOT EXISTS alerts (
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ── Ollama AI Analyses ────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ollama_analyses (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_filename TEXT NOT NULL,
+    question        TEXT NOT NULL,
+    model           TEXT NOT NULL,
+    response_text   TEXT NOT NULL,
+    alerts          TEXT[],
+    sample_count    INTEGER,
+    duration_min    NUMERIC(8,2),
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ollama_analyses_filename ON ollama_analyses(session_filename);
+CREATE INDEX IF NOT EXISTS idx_ollama_analyses_created  ON ollama_analyses(created_at DESC);
+
 -- Shared account registry used by the current web and Android prototype auth.
 -- This keeps accounts visible across clients until Supabase auth is fully wired.
 CREATE TABLE IF NOT EXISTS app_user_accounts (

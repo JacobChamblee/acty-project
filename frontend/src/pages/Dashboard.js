@@ -413,7 +413,7 @@ export default function Dashboard() {
                 <div className="chart-card-title">Recent Sessions</div>
                 <div className="chart-card-sub" style={{ marginBottom: 0 }}>2024 Toyota GR86</div>
               </div>
-              <Link to="/sessions" className="btn btn-ghost btn-sm">View all</Link>
+              <Link to="/insights" className="btn btn-ghost btn-sm">View all</Link>
             </div>
             <table className="sessions-table">
               <thead>

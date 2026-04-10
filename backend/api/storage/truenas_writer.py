@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 
 SESSION_STORE = Path(os.environ.get("ACTY_SESSION_STORE", "/mnt/data1/share1/sessions"))
 REPORT_STORE  = Path(os.environ.get("ACTY_REPORT_STORE",  "/mnt/data1/share1/reports"))
+CSV_STORE     = Path(os.environ.get("ACTY_CSV_STORE",     "/mnt/data1/share1/csvs"))
 
 
 async def archive_session(session_filename: str, data: dict) -> None:
@@ -40,6 +41,24 @@ async def archive_session(session_filename: str, data: dict) -> None:
         log.info("[truenas] session archived → %s", dest)
     except OSError as exc:
         log.warning("[truenas] session archive skipped (NAS offline?): %s", exc)
+
+
+async def archive_csv(filename: str, raw_bytes: bytes) -> None:
+    """
+    Write a raw OBD-II CSV to TrueNAS cold storage.
+
+    File pattern: csvs/<filename>
+    The filename is used as-is so it can be matched to session DB records.
+    """
+    if not raw_bytes:
+        return
+    try:
+        CSV_STORE.mkdir(parents=True, exist_ok=True)
+        dest = CSV_STORE / filename
+        dest.write_bytes(raw_bytes)
+        log.info("[truenas] csv archived → %s", dest)
+    except OSError as exc:
+        log.warning("[truenas] csv archive skipped (NAS offline?): %s", exc)
 
 
 async def archive_report(vehicle_id: str, report_text: str) -> None:
