@@ -1,80 +1,66 @@
+import { supabase } from './supabaseClient';
 import { API_BASE } from './config';
 
-function parseError(detail, fallback) {
-  if (typeof detail === 'string' && detail.trim()) return detail;
-  return fallback;
-}
+// ── Supabase auth ─────────────────────────────────────────────────────────────
 
-function normalizeAccountResponse(payload = {}) {
-  const account = payload.account || {};
-  const email = (account.email || payload.email || '').toLowerCase();
-  const passwordHash = payload.password_hash || account._pwHash || account.pwHash || '';
-  return {
-    ...account,
-    email,
-    ...(passwordHash ? { _pwHash: passwordHash } : {}),
-  };
-}
-
-async function postJson(path, body, fallbackMessage) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+export async function signIn(email, password) {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: email.toLowerCase().trim(),
+    password,
   });
-
-  let payload = {};
-  try {
-    payload = await response.json();
-  } catch {
-    payload = {};
-  }
-
-  if (!response.ok) {
-    throw new Error(parseError(payload.detail, fallbackMessage));
-  }
-  return payload;
+  if (error) throw new Error(error.message);
+  return data;
 }
 
-export async function syncRemoteAccount(account) {
-  if (!account?.email) return account;
+export async function signUp(email, password, metadata = {}) {
+  const { data, error } = await supabase.auth.signUp({
+    email: email.toLowerCase().trim(),
+    password,
+    options: { data: metadata },
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function signOut() {
+  const { error } = await supabase.auth.signOut();
+  if (error) throw new Error(error.message);
+}
+
+export async function signInWithProvider(provider) {
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: {
+      redirectTo: `${window.location.origin}/auth/callback`,
+    },
+  });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function getSession() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw new Error(error.message);
+  return data.session;
+}
+
+// ── Backend profile sync ──────────────────────────────────────────────────────
+// Keeps FastAPI's app_user_accounts table in sync with the local profile.
+// Non-critical — fires and forgets; never blocks the UI.
+
+export async function syncProfileToBackend(account) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) return;
   try {
-    const payload = await postJson(
-      '/api/v1/auth/sync',
-      {
-        email: account.email.toLowerCase(),
-        password_hash: account._pwHash || account.pwHash || null,
-        account,
+    await fetch(`${API_BASE}/api/v1/auth/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
       },
-      'Could not sync account.',
-    );
-    return normalizeAccountResponse(payload);
+      body: JSON.stringify({ email: account.email, account }),
+    });
   } catch {
-    return account;
+    // best-effort
   }
-}
-
-export async function loginRemoteAccount(email, passwordHash) {
-  const payload = await postJson(
-    '/api/v1/auth/login',
-    {
-      email: email.toLowerCase(),
-      password_hash: passwordHash,
-    },
-    'Could not sign in.',
-  );
-  return normalizeAccountResponse(payload);
-}
-
-export async function registerRemoteAccount(account) {
-  const payload = await postJson(
-    '/api/v1/auth/register',
-    {
-      email: account.email.toLowerCase(),
-      password_hash: account._pwHash || account.pwHash || null,
-      account,
-    },
-    'Could not create account.',
-  );
-  return normalizeAccountResponse(payload);
 }

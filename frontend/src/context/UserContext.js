@@ -1,10 +1,11 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { syncRemoteAccount } from '../authApi';
+import { supabase } from '../supabaseClient';
+import { syncProfileToBackend } from '../authApi';
 
 const UserContext = createContext(null);
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
-// cactus_accounts: { [email]: userObject } — isolated per user
+// cactus_accounts: { [email]: userObject } — vehicle/prefs data, isolated per user
 // cactus_session:  email of current logged-in user
 const ACCOUNTS_KEY = 'cactus_accounts';
 const SESSION_KEY  = 'cactus_session';
@@ -25,12 +26,48 @@ function saveCurrentEmail(email) {
   else localStorage.removeItem(SESSION_KEY);
 }
 
-// ── Load initial user from registry + session pointer ─────────────────────────
-function loadInitialUser() {
-  const email    = loadCurrentEmail();
-  if (!email) return null;
+function persistAccount(account) {
+  if (!account?.email) return;
   const accounts = loadAccounts();
-  return accounts[email] || null;
+  accounts[account.email.toLowerCase()] = account;
+  saveAccounts(accounts);
+  saveCurrentEmail(account.email.toLowerCase());
+}
+
+// ── Load initial user from local registry ─────────────────────────────────────
+function loadInitialUser() {
+  const email = loadCurrentEmail();
+  if (!email) return null;
+  return loadAccounts()[email] || null;
+}
+
+// ── Map a Supabase user object to the local account shape ─────────────────────
+function accountFromSupabaseUser(sbUser) {
+  const email = sbUser.email.toLowerCase();
+  const meta  = sbUser.user_metadata || {};
+  return {
+    username:        meta.username || email.split('@')[0],
+    displayName:     meta.full_name || meta.display_name || meta.username || email.split('@')[0],
+    email,
+    avatarUrl:       meta.avatar_url || null,
+    provider:        sbUser.app_metadata?.provider || null,
+    vehicles:        [],
+    obdAdapters:     [],
+    activeVehicleId: null,
+  };
+}
+
+// ── Apply a Supabase user into the local registry + React state ───────────────
+function applySupabaseUser(sbUser, setUserRaw) {
+  const email    = sbUser.email.toLowerCase();
+  const accounts = loadAccounts();
+  // Preserve existing vehicle/prefs data if the account already exists locally
+  if (!accounts[email]) {
+    accounts[email] = accountFromSupabaseUser(sbUser);
+    saveAccounts(accounts);
+  }
+  saveCurrentEmail(email);
+  setUserRaw(accounts[email]);
 }
 
 // ── Default state shapes ──────────────────────────────────────────────────────
@@ -124,21 +161,40 @@ export const authStore = {
 // ── Provider ──────────────────────────────────────────────────────────────────
 export function UserProvider({ children }) {
   const [user, setUserRaw] = useState(loadInitialUser);
+  const [hasHydratedRemote, setHasHydratedRemote] = useState(false);
 
+  // ── Supabase session listener ─────────────────────────────────────────────
   useEffect(() => {
-    if (user?.email) {
-      void syncRemoteAccount(user);
+    // Restore session on page load
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) applySupabaseUser(session.user, setUserRaw);
+      setHasHydratedRemote(true);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        applySupabaseUser(session.user, setUserRaw);
+      } else if (event === 'SIGNED_OUT') {
+        saveCurrentEmail(null);
+        setUserRaw(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // ── Sync profile to FastAPI backend after hydration ───────────────────────
+  useEffect(() => {
+    if (hasHydratedRemote && user?.email) {
+      void syncProfileToBackend(user);
     }
-  }, [user]);
+  }, [hasHydratedRemote, user]);
 
   // Write to registry + update session pointer + local state
   const setUser = useCallback((u) => {
     setUserRaw(u);
     if (u) {
-      const accounts = loadAccounts();
-      accounts[u.email.toLowerCase()] = u;
-      saveAccounts(accounts);
-      saveCurrentEmail(u.email.toLowerCase());
+      persistAccount(u);
     } else {
       saveCurrentEmail(null);
     }
@@ -278,8 +334,9 @@ export function UserProvider({ children }) {
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   const logout = useCallback(() => {
-    saveCurrentEmail(null);   // clear session — account data preserved
+    saveCurrentEmail(null);
     setUserRaw(null);
+    supabase.auth.signOut().catch(() => {}); // fire-and-forget
   }, []);
 
   const deleteAccount = useCallback(() => {
@@ -290,6 +347,7 @@ export function UserProvider({ children }) {
     }
     saveCurrentEmail(null);
     setUserRaw(null);
+    supabase.auth.signOut().catch(() => {});
   }, [user]);
 
   // ── Derived values ───────────────────────────────────────────────────────────

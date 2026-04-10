@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UserProvider, useUser } from './context/UserContext';
@@ -12,6 +12,33 @@ import NeedleNest from './pages/NeedleNest';
 import About from './pages/About';
 import Vehicles from './pages/Vehicles';
 import Settings from './pages/Settings';
+
+// ── OAuth Callback ────────────────────────────────────────────────────────────
+// Supabase redirects here after Google/Facebook OAuth.
+// The Supabase SDK detects the session token in the URL automatically;
+// onAuthStateChange in UserContext picks it up and sets the user.
+function AuthCallbackPage() {
+  const navigate = useNavigate();
+  const { user } = useUser();
+
+  // Navigate to dashboard once the session is established
+  useEffect(() => {
+    if (user) navigate('/dashboard', { replace: true });
+  }, [user, navigate]);
+
+  // Handle error query params from Supabase (e.g. invalid link)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get('error_description') || params.get('error');
+    if (err) navigate(`/login?error=${encodeURIComponent(err)}`, { replace: true });
+  }, [navigate]);
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0F1117' }}>
+      <div style={{ color: '#94A3B8', fontSize: '1rem' }}>Signing you in…</div>
+    </div>
+  );
+}
 
 // ── Shared Navbar ─────────────────────────────────────────────────────────────
 function Navbar() {
@@ -186,6 +213,7 @@ function AppRoutes() {
           <Route path="/vehicles" element={<PageWrap><div className="page-content"><Vehicles/></div></PageWrap>}/>
           <Route path="/sharing" element={<PageWrap><div className="page-content"><Dashboard/></div></PageWrap>}/>
           <Route path="/settings" element={<PageWrap><div className="page-content"><Settings/></div></PageWrap>}/>
+          <Route path="/auth/callback" element={<AuthCallbackPage/>}/>
           <Route path="*" element={<PageWrap><Landing/></PageWrap>}/>
         </Routes>
       </AnimatePresence>

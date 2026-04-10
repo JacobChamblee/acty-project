@@ -14,8 +14,10 @@ import uuid
 from typing import Any
 
 import asyncpg
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
+
+from api.deps import get_current_user
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -45,6 +47,18 @@ class SyncRequest(AuthPayload):
 
 class LoginRequest(AuthPayload):
     password_hash: str = Field(..., min_length=1, max_length=256)
+
+
+class LookupRequest(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if "@" not in normalized:
+            raise ValueError("A valid email is required.")
+        return normalized
 
 
 async def _open_db_connection() -> asyncpg.Connection:
@@ -241,5 +255,58 @@ async def login_account(body: LoginRequest):
             "account": _normalize_response_account(account, body.email, stored_pw_hash),
             "password_hash": stored_pw_hash,
         }
+    finally:
+        await conn.close()
+
+
+@router.post("/lookup")
+async def lookup_account(body: LookupRequest):
+    conn = await _open_db_connection()
+    try:
+        await _ensure_auth_schema(conn)
+        row = await _fetch_account_row(conn, body.email)
+        if not row:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "No account found for that email.")
+
+        account = _decode_account(row["account_json"])
+        stored_pw_hash = row["pw_hash"]
+        return {
+            "status": "ok",
+            "account": _normalize_response_account(account, body.email, stored_pw_hash),
+            "password_hash": stored_pw_hash,
+        }
+    finally:
+        await conn.close()
+
+
+@router.get("/me")
+async def get_me(claims: dict = Depends(get_current_user)):
+    """
+    Return the profile for the authenticated Supabase user.
+    Creates a stub row in app_user_accounts on first call (upsert by sub).
+    Requires: Authorization: Bearer <supabase_access_token>
+    """
+    email = (claims.get("email") or "").lower()
+    sub   = claims.get("sub", str(uuid.uuid4()))
+
+    conn = await _open_db_connection()
+    try:
+        await _ensure_auth_schema(conn)
+
+        # Upsert — on first login create a minimal row; never overwrite existing data
+        await conn.execute(
+            """
+            INSERT INTO app_user_accounts (id, email, account_json)
+            VALUES ($1, $2, $3::jsonb)
+            ON CONFLICT (email) DO NOTHING
+            """,
+            sub,
+            email,
+            json.dumps({"email": email}),
+        )
+
+        row = await _fetch_account_row(conn, email)
+        account = _decode_account(row["account_json"]) if row else {"email": email}
+        return {"status": "ok", "account": _normalize_response_account(account, email, None)}
     finally:
         await conn.close()

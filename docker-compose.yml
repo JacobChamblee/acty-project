@@ -49,6 +49,8 @@ services:
       # TrueNAS storage (192.168.68.125)
       - ACTY_SESSION_STORE=${ACTY_SESSION_STORE:-/mnt/data1/share1/sessions}
       - ACTY_REPORT_STORE=${ACTY_REPORT_STORE:-/mnt/data1/share1/reports}
+      # Supabase JWT verification
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
       # Development
       - ACTY_RELOAD=${ACTY_RELOAD:-false}
     volumes:

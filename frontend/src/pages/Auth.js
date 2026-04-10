@@ -1,38 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useUser } from '../context/UserContext';
 import { authStore } from '../context/UserContext';
-import { loginRemoteAccount, registerRemoteAccount } from '../authApi';
+import { signIn, signUp, signInWithProvider } from '../authApi';
 import './Auth.css';
-
-// ── OAuth App IDs ─────────────────────────────────────────────────────────────
-// Replace these with your real credentials before deploying.
-const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
-const FB_APP_ID        = process.env.REACT_APP_FB_APP_ID        || '';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-async function hashPw(password) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-function decodeJwt(token) {
-  try {
-    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    return JSON.parse(atob(payload));
-  } catch { return null; }
-}
-
-function loadScript(src, id) {
-  return new Promise((resolve, reject) => {
-    if (document.getElementById(id)) { resolve(); return; }
-    const s = document.createElement('script');
-    s.id = id; s.src = src; s.async = true; s.defer = true;
-    s.onload = resolve; s.onerror = () => reject(new Error(`Failed to load ${src}`));
-    document.head.appendChild(s);
-  });
-}
 
 const FADE_UP = {
   hidden:  { opacity: 0, y: 20 },
@@ -93,35 +65,6 @@ function FacebookLogo() {
   );
 }
 
-// ── Social sign-in shared handler ─────────────────────────────────────────────
-function useSocialSignIn(setUser, navigate) {
-  return useCallback(async ({ email, displayName, avatarUrl, provider }) => {
-    const key = email.toLowerCase();
-    let account = authStore.getAccount(key);
-    if (!account) {
-      account = {
-        username:        displayName?.split(' ')[0] || key.split('@')[0],
-        displayName,
-        email:           key,
-        region:          '',
-        avatarUrl:       avatarUrl || null,
-        provider,
-        vehicles:        [],
-        obdAdapters:     [],
-        activeVehicleId: null,
-      };
-      authStore.createAccount(account);
-    } else {
-      // Update display name / avatar from provider if not overridden
-      if (!account.displayName && displayName) authStore.updateAccount(key, { displayName, avatarUrl });
-      authStore.setSession(key);
-    }
-    const fresh = authStore.getAccount(key);
-    setUser(fresh);
-    navigate('/dashboard');
-  }, [setUser, navigate]);
-}
-
 // ── Login ─────────────────────────────────────────────────────────────────────
 export function LoginPage() {
   const [form, setForm]       = useState({ email: '', password: '' });
@@ -129,107 +72,44 @@ export function LoginPage() {
   const [gLoading, setGLoad]  = useState(false);
   const [fbLoading, setFbLoad]= useState(false);
   const [error, setError]     = useState('');
-  const { setUser }           = useUser();
   const navigate              = useNavigate();
-  const handleSocial          = useSocialSignIn(setUser, navigate);
-
-  // ── Google One-Tap ────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!GOOGLE_CLIENT_ID) return;
-    loadScript('https://accounts.google.com/gsi/client', 'gsi-script').then(() => {
-      window.google?.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: async (response) => {
-          setGLoad(true);
-          const payload = decodeJwt(response.credential);
-          if (!payload?.email) { setError('Google sign-in failed.'); setGLoad(false); return; }
-          await handleSocial({ email: payload.email, displayName: payload.name, avatarUrl: payload.picture, provider: 'google' });
-          setGLoad(false);
-        },
-        auto_select: false,
-      });
-    }).catch(() => {});
-  }, [handleSocial]);
-
-  // ── Facebook SDK ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!FB_APP_ID) return;
-    window.fbAsyncInit = () => {
-      window.FB.init({ appId: FB_APP_ID, cookie: true, xfbml: false, version: 'v19.0' });
-    };
-    loadScript('https://connect.facebook.net/en_US/sdk.js', 'fb-sdk').catch(() => {});
-  }, []);
 
   const handleEmailLogin = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    await new Promise(r => setTimeout(r, 400));
-
-    let account = authStore.getAccount(form.email);
-    const hash = await hashPw(form.password);
-
-    if (!account) {
-      try {
-        account = await loginRemoteAccount(form.email, hash);
-        authStore.createAccount(account);
-      } catch (err) {
-        setError(err.message || 'No account found for that email. Please register first.');
-        setLoading(false);
-        return;
-      }
-    }
-
-    if (account.provider && !account._pwHash) {
-      setError(`This account was created with ${account.provider}. Please use that sign-in method.`);
+    try {
+      await signIn(form.email, form.password);
+      // onAuthStateChange in UserContext will set the user state
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err.message || 'Sign in failed. Check your email and password.');
+    } finally {
       setLoading(false);
-      return;
     }
-
-    if (!account._pwHash) {
-      // Migration: account was created before password hashing was introduced.
-      // Accept any password on first login and set the hash going forward.
-      authStore.updateAccount(form.email, { _pwHash: hash });
-      account = authStore.getAccount(form.email);
-    } else if (hash !== account._pwHash) {
-      try {
-        account = await loginRemoteAccount(form.email, hash);
-        authStore.createAccount(account);
-      } catch (err) {
-        setError(err.message || 'Incorrect password. Please try again.');
-        setLoading(false);
-        return;
-      }
-    }
-
-    authStore.setSession(form.email);
-    setUser(account);
-    setLoading(false);
-    navigate('/dashboard');
   };
 
-  const handleGoogleClick = () => {
-    if (!GOOGLE_CLIENT_ID) { setError('Google sign-in is not configured.'); return; }
+  const handleGoogleClick = async () => {
     setError('');
-    window.google?.accounts.id.prompt();
+    setGLoad(true);
+    try {
+      await signInWithProvider('google');
+      // User is redirected away — /auth/callback handles the rest
+    } catch (err) {
+      setError(err.message || 'Google sign-in failed.');
+      setGLoad(false);
+    }
   };
 
-  const handleFacebookClick = () => {
-    if (!FB_APP_ID) { setError('Facebook sign-in is not configured.'); return; }
+  const handleFacebookClick = async () => {
     setError('');
     setFbLoad(true);
-    window.FB?.login(async (res) => {
-      if (res.authResponse) {
-        window.FB.api('/me', { fields: 'name,email,picture.type(large)' }, async (data) => {
-          if (!data.email) { setError('Facebook did not provide an email address.'); setFbLoad(false); return; }
-          await handleSocial({ email: data.email, displayName: data.name, avatarUrl: data.picture?.data?.url, provider: 'facebook' });
-          setFbLoad(false);
-        });
-      } else {
-        setError('Facebook sign-in was cancelled.');
-        setFbLoad(false);
-      }
-    }, { scope: 'email,public_profile' });
+    try {
+      await signInWithProvider('facebook');
+    } catch (err) {
+      setError(err.message || 'Facebook sign-in failed.');
+      setFbLoad(false);
+    }
   };
 
   return (
@@ -305,59 +185,28 @@ export function RegisterPage() {
   const [gLoading, setGLoad]  = useState(false);
   const [fbLoading, setFbLoad]= useState(false);
   const [error, setError]     = useState('');
-  const { setUser }           = useUser();
   const navigate              = useNavigate();
-  const handleSocial          = useSocialSignIn(setUser, navigate);
 
-  // ── Google ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!GOOGLE_CLIENT_ID) return;
-    loadScript('https://accounts.google.com/gsi/client', 'gsi-script').then(() => {
-      window.google?.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: async (response) => {
-          setGLoad(true);
-          const payload = decodeJwt(response.credential);
-          if (!payload?.email) { setError('Google sign-in failed.'); setGLoad(false); return; }
-          await handleSocial({ email: payload.email, displayName: payload.name, avatarUrl: payload.picture, provider: 'google' });
-          setGLoad(false);
-        },
-        auto_select: false,
-      });
-    }).catch(() => {});
-  }, [handleSocial]);
-
-  // ── Facebook ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!FB_APP_ID) return;
-    window.fbAsyncInit = () => {
-      window.FB.init({ appId: FB_APP_ID, cookie: true, xfbml: false, version: 'v19.0' });
-    };
-    loadScript('https://connect.facebook.net/en_US/sdk.js', 'fb-sdk').catch(() => {});
-  }, []);
-
-  const handleGoogleClick = () => {
-    if (!GOOGLE_CLIENT_ID) { setError('Google sign-in is not configured.'); return; }
+  const handleGoogleClick = async () => {
     setError('');
-    window.google?.accounts.id.prompt();
+    setGLoad(true);
+    try {
+      await signInWithProvider('google');
+    } catch (err) {
+      setError(err.message || 'Google sign-in failed.');
+      setGLoad(false);
+    }
   };
 
-  const handleFacebookClick = () => {
-    if (!FB_APP_ID) { setError('Facebook sign-in is not configured.'); return; }
+  const handleFacebookClick = async () => {
     setError('');
     setFbLoad(true);
-    window.FB?.login(async (res) => {
-      if (res.authResponse) {
-        window.FB.api('/me', { fields: 'name,email,picture.type(large)' }, async (data) => {
-          if (!data.email) { setError('Facebook did not provide an email address.'); setFbLoad(false); return; }
-          await handleSocial({ email: data.email, displayName: data.name, avatarUrl: data.picture?.data?.url, provider: 'facebook' });
-          setFbLoad(false);
-        });
-      } else {
-        setError('Facebook sign-in was cancelled.');
-        setFbLoad(false);
-      }
-    }, { scope: 'email,public_profile' });
+    try {
+      await signInWithProvider('facebook');
+    } catch (err) {
+      setError(err.message || 'Facebook sign-in failed.');
+      setFbLoad(false);
+    }
   };
 
   const validateStep1 = () => {
@@ -365,7 +214,6 @@ export function RegisterPage() {
     if (!form.email.includes('@'))  return 'Please enter a valid email.';
     if (form.password.length < 8)   return 'Password must be at least 8 characters.';
     if (form.password !== form.confirmPw) return 'Passwords do not match.';
-    if (authStore.getAccount(form.email)) return 'An account with this email already exists.';
     return null;
   };
 
@@ -383,6 +231,7 @@ export function RegisterPage() {
   const handleSubmit = async (skipVehicle = true) => {
     setLoading(true);
     setError('');
+
     const vehicles = (!skipVehicle && form.vehicleMake && form.vehicleModel) ? [{
       id:          `v${Date.now()}`,
       year:        form.vehicleYear,
@@ -392,24 +241,38 @@ export function RegisterPage() {
       drivetrain:  form.vehicleDrivetrain,
     }] : [];
 
-    const hash = await hashPw(form.password);
-    const account = {
+    const email = form.email.toLowerCase();
+
+    // Pre-populate local profile with vehicle/prefs data so it's ready when
+    // onAuthStateChange fires (or when the user confirms their email later).
+    const localAccount = {
       username:        form.username,
       displayName:     form.username,
-      email:           form.email.toLowerCase(),
-      _pwHash:         hash,
+      email,
       region:          form.region,
       vehicles,
       obdAdapters:     [],
       activeVehicleId: vehicles[0]?.id || null,
     };
+    authStore.createAccount(localAccount);
+
     try {
-      const remoteAccount = await registerRemoteAccount(account);
-      authStore.createAccount(remoteAccount);
-      setUser(authStore.getAccount(form.email));
-      setLoading(false);
-      navigate('/dashboard');
+      const data = await signUp(email, form.password, {
+        username:  form.username,
+        full_name: form.username,
+        region:    form.region,
+      });
+
+      if (data.session) {
+        // Email confirmation disabled — session is live immediately
+        navigate('/dashboard');
+      } else {
+        // Email confirmation required — user must click the link in their inbox
+        setError('Almost there! Check your email and click the confirmation link to activate your account.');
+        setLoading(false);
+      }
     } catch (err) {
+      authStore.deleteAccount(email);
       setError(err.message || 'Could not create account.');
       setLoading(false);
     }

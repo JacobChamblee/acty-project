@@ -3,7 +3,10 @@ package com.acty.data
 import android.content.Context
 import android.content.SharedPreferences
 import com.acty.ActyConfig
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -45,6 +48,7 @@ class AuthManager(private val context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("acty_auth", Context.MODE_PRIVATE)
     private val httpClient = OkHttpClient()
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jsonMediaType = "application/json".toMediaType()
 
     // ── Password hashing ──────────────────────────────────────────────────────
@@ -88,8 +92,21 @@ class AuthManager(private val context: Context) {
     }
 
     private fun accountFromJson(o: JSONObject): UserAccount {
+        val activeVehicleId = o.optString("activeVehicleId", "")
         val arr = try { o.getJSONArray("vehicles") } catch (_: Exception) { JSONArray() }
-        val vehicles = (0 until arr.length()).map { vehicleFromJson(arr.getJSONObject(it)) }
+        val vehicles = (0 until arr.length()).map { idx ->
+            val vehicleJson = arr.getJSONObject(idx)
+            val vehicleId = vehicleJson.optString("id", UUID.randomUUID().toString())
+            VehicleEntry(
+                id         = vehicleId,
+                make       = vehicleJson.optString("make", ""),
+                model      = vehicleJson.optString("model", ""),
+                year       = vehicleJson.opt("year")?.toString()?.toIntOrNull() ?: 2020,
+                drivetrain = vehicleJson.optString("drivetrain", ""),
+                obdMac     = vehicleJson.optString("mac", vehicleJson.optString("obdMac", "")),
+                isActive   = vehicleJson.optBoolean("active", vehicleId == activeVehicleId),
+            )
+        }
         return UserAccount(
             username             = o.optString("username",             ""),
             displayName          = o.optString("displayName",          o.optString("username", "")),
@@ -109,6 +126,7 @@ class AuthManager(private val context: Context) {
     }
 
     private fun accountToJson(a: UserAccount): JSONObject {
+        val activeVehicleId = a.vehicles.firstOrNull { it.isActive }?.id.orEmpty()
         val arr = JSONArray().also { arr -> a.vehicles.forEach { arr.put(vehicleToJson(it)) } }
         return JSONObject().apply {
             put("username",             a.username)
@@ -117,6 +135,7 @@ class AuthManager(private val context: Context) {
             put("pwHash",               a.pwHash)
             put("region",               a.region)
             put("vehicles",             arr)
+            put("activeVehicleId",      activeVehicleId)
             put("byokApiKey",           a.byokApiKey)
             put("byokProvider",         a.byokProvider)
             put("syncWifiOnly",         a.syncWifiOnly)
@@ -252,6 +271,58 @@ class AuthManager(private val context: Context) {
             }
         }
 
+    private suspend fun syncRemote(account: UserAccount): RemoteAuthResponse =
+        withContext(Dispatchers.IO) {
+            try {
+                val payload = JSONObject()
+                    .put("email", account.email.lowercase())
+                    .put("account", accountToJson(account))
+                if (account.pwHash.isNotBlank()) {
+                    payload.put("password_hash", account.pwHash)
+                } else {
+                    payload.put("password_hash", JSONObject.NULL)
+                }
+                val requestBody = payload
+                    .toString()
+                    .toRequestBody(jsonMediaType)
+                val request = Request.Builder()
+                    .url("${ActyConfig.API_BASE}/api/v1/auth/sync")
+                    .post(requestBody)
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    val responseText = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) {
+                        val message = try {
+                            JSONObject(responseText).optString("detail", "")
+                        } catch (_: Exception) { "" }
+                        return@withContext RemoteAuthResponse(error = message.ifBlank {
+                            "Could not sync account."
+                        })
+                    }
+
+                    val payload = JSONObject(responseText)
+                    val accountJson = payload.optJSONObject("account")
+                        ?: return@withContext RemoteAuthResponse(error = "Invalid account response from server.")
+                    val pwHash = payload.optString("password_hash", account.pwHash)
+                    RemoteAuthResponse(account = remoteAccountFromJson(accountJson, pwHash))
+                }
+            } catch (_: Exception) {
+                RemoteAuthResponse(error = "Could not reach the shared account service.")
+            }
+        }
+
+    private fun persistAccount(account: UserAccount, pushRemote: Boolean = false) {
+        saveAccount(account)
+        _sessionEmail = account.email.lowercase()
+        if (!pushRemote) return
+
+        backgroundScope.launch {
+            val remote = syncRemote(account)
+            remote.account?.let { saveAccount(it) }
+        }
+    }
+
     // ── Session ───────────────────────────────────────────────────────────────
 
     private var _sessionEmail: String
@@ -276,8 +347,7 @@ class AuthManager(private val context: Context) {
             val remote = loginRemote(normalizedEmail, hash)
             val remoteAccount = remote.account
             return if (remoteAccount != null) {
-                saveAccount(remoteAccount)
-                _sessionEmail = remoteAccount.email.lowercase()
+                persistAccount(remoteAccount)
                 AuthResult.Success
             } else {
                 AuthResult.Error(remote.error ?: "No account found for that email.")
@@ -285,8 +355,7 @@ class AuthManager(private val context: Context) {
         }
 
         return if (localAccount.pwHash.isEmpty()) {
-            saveAccount(localAccount.copy(pwHash = hash))
-            _sessionEmail = localAccount.email.lowercase()
+            persistAccount(localAccount.copy(pwHash = hash), pushRemote = true)
             AuthResult.Success
         } else if (hash == localAccount.pwHash) {
             _sessionEmail = localAccount.email.lowercase()
@@ -295,8 +364,7 @@ class AuthManager(private val context: Context) {
             val remote = loginRemote(normalizedEmail, hash)
             val remoteAccount = remote.account
             if (remoteAccount != null) {
-                saveAccount(remoteAccount)
-                _sessionEmail = remoteAccount.email.lowercase()
+                persistAccount(remoteAccount)
                 AuthResult.Success
             } else {
                 AuthResult.Error(remote.error ?: "Incorrect password.")
@@ -329,8 +397,7 @@ class AuthManager(private val context: Context) {
             return AuthResult.Error(remote.error)
         }
 
-        saveAccount(savedAccount)
-        _sessionEmail = key
+        persistAccount(savedAccount)
         return AuthResult.Success
     }
 
@@ -349,9 +416,7 @@ class AuthManager(private val context: Context) {
     // ── User mutations (all write back to storage immediately) ────────────────
 
     fun updateUser(updated: UserAccount) {
-        saveAccount(updated)
-        // Keep session pointing to updated email
-        _sessionEmail = updated.email.lowercase()
+        persistAccount(updated, pushRemote = true)
     }
 
     fun addVehicle(vehicle: VehicleEntry) {
@@ -361,7 +426,7 @@ class AuthManager(private val context: Context) {
             id       = vehicle.id.ifEmpty { UUID.randomUUID().toString() },
             isActive = existing.isEmpty(),   // first vehicle becomes active
         )
-        saveAccount(account.copy(vehicles = existing + withId))
+        persistAccount(account.copy(vehicles = existing + withId), pushRemote = true)
     }
 
     fun removeVehicle(id: String) {
@@ -371,22 +436,22 @@ class AuthManager(private val context: Context) {
         val adjusted = if (wasActive && remaining.isNotEmpty())
             remaining.mapIndexed { i, v -> if (i == 0) v.copy(isActive = true) else v }
         else remaining
-        saveAccount(account.copy(vehicles = adjusted))
+        persistAccount(account.copy(vehicles = adjusted), pushRemote = true)
     }
 
     fun setActiveVehicle(id: String) {
         val account = currentUser() ?: return
-        saveAccount(account.copy(
+        persistAccount(account.copy(
             vehicles = account.vehicles.map { it.copy(isActive = it.id == id) }
-        ))
+        ), pushRemote = true)
     }
 
     fun updateVehicleObd(vehicleId: String, mac: String) {
         val account = currentUser() ?: return
-        saveAccount(account.copy(
+        persistAccount(account.copy(
             vehicles = account.vehicles.map { v ->
                 if (v.id == vehicleId) v.copy(obdMac = mac) else v
             }
-        ))
+        ), pushRemote = true)
     }
 }
