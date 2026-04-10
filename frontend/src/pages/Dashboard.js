@@ -37,9 +37,9 @@ export function Sidebar() {
       </Link>
       <div style={{ flex: 1 }}/>
       <div className="sidebar-section-label">Quick Capture</div>
-      <button className="sidebar-capture-btn">
+      <Link to="/sessions" className="sidebar-capture-btn" style={{ textDecoration: 'none' }}>
         <span>⏺</span> Start Session
-      </button>
+      </Link>
     </div>
   );
 }
@@ -292,7 +292,7 @@ export default function Dashboard() {
                 {vehicleName} · No sessions yet
               </p>
             </div>
-            <Link to="/dashboard/capture" className="btn btn-primary">
+            <Link to="/sessions" className="btn btn-primary">
               ⏺ Start Session
             </Link>
           </div>
@@ -513,7 +513,7 @@ export default function Dashboard() {
             <div className="chart-card-sub">Common tasks</div>
             <div className="quick-actions-grid">
               {[
-                { icon: '⏺', label: 'Start Session', color: '#1E40AF', bg: '#EFF6FF', to: '/dashboard/capture' },
+                { icon: '⏺', label: 'Upload Session', color: '#1E40AF', bg: '#EFF6FF', to: '/sessions' },
                 { icon: '📊', label: 'NeedleNest', color: '#8B5CF6', bg: '#EDE9FE', to: '/needlenest' },
                 { icon: '📤', label: 'Share Report', color: '#10B981', bg: '#ECFDF5', to: '/sharing' },
                 { icon: '🚗', label: 'Add Vehicle', color: '#F59E0B', bg: '#FFFBEB', to: '/vehicles' },
