@@ -1,0 +1,156 @@
+/* ── Sessions page ───────────────────────────────────────────────────────────── */
+
+.ses-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 2rem 2rem 1.25rem;
+  border-bottom: 1px solid #F1F5F9;
+  flex-wrap: wrap;
+}
+
+.ses-title {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: #0F172A;
+  margin: 0 0 0.2rem;
+}
+
+.ses-sub {
+  font-size: 0.85rem;
+  color: #94A3B8;
+  margin: 0;
+}
+
+.ses-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.ses-upload-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+}
+.ses-upload-btn.disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* Banners */
+.ses-banner {
+  margin: 0.75rem 2rem 0;
+  padding: 0.625rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.ses-banner-err { background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; }
+.ses-banner-ok  { background: #F0FDF4; color: #15803D; border: 1px solid #BBF7D0; }
+
+/* Table wrapper */
+.ses-wrap {
+  padding: 1.25rem 2rem 2rem;
+}
+
+/* Empty / loading states */
+.ses-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 4rem 2rem;
+  text-align: center;
+  color: #64748B;
+}
+.ses-state h3 { margin: 0; color: #1E293B; font-size: 1.1rem; }
+.ses-state p  { margin: 0; font-size: 0.9rem; max-width: 380px; line-height: 1.6; }
+.ses-empty-icon { font-size: 2.5rem; }
+
+/* Table */
+.ses-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.ses-table thead th {
+  padding: 0.625rem 0.875rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #94A3B8;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid #F1F5F9;
+}
+
+.ses-table tbody .ses-row {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.ses-table tbody .ses-row:hover { background: #F8FAFC; }
+.ses-table tbody td {
+  padding: 0.75rem 0.875rem;
+  border-bottom: 1px solid #F8FAFC;
+  vertical-align: middle;
+}
+
+.ses-id {
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #1E293B;
+  background: #F1F5F9;
+  padding: 0.2rem 0.5rem;
+  border-radius: 5px;
+}
+
+.ses-dim { color: #64748B; }
+
+.ses-score {
+  font-weight: 700;
+  font-size: 0.9375rem;
+}
+
+/* Spinners */
+.ses-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: ses-spin 0.7s linear infinite;
+}
+
+.ses-spinner-lg {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #E2E8F0;
+  border-top-color: #1E40AF;
+  border-radius: 50%;
+  animation: ses-spin 0.7s linear infinite;
+}
+
+@keyframes ses-spin { to { transform: rotate(360deg); } }
+
+.ses-parse-err {
+  margin-top: 1rem;
+  font-size: 0.8rem;
+  color: #94A3B8;
+  text-align: center;
+}
+
+/* Responsive */
+@media (max-width: 700px) {
+  .ses-header, .ses-wrap { padding-left: 1rem; padding-right: 1rem; }
+  .ses-table thead th:nth-child(3),
+  .ses-table tbody td:nth-child(3),
+  .ses-table thead th:nth-child(4),
+  .ses-table tbody td:nth-child(4) { display: none; }
+}

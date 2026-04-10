@@ -23,9 +23,9 @@ import java.util.concurrent.TimeUnit
 class SyncManager(private val context: Context) {
 
     companion object {
-        private const val TAG         = "SyncManager"
-        private const val UPLOAD_URL  = "https://api.acty-labs.com/upload"
-        private const val MANIFEST    = ".sync_manifest"
+        private const val TAG      = "SyncManager"
+        private const val MANIFEST = ".sync_manifest"
+        private val UPLOAD_URL     = "${com.acty.ActyConfig.API_BASE}/api/v1/sessions/sync"
     }
 
     private val client = OkHttpClient.Builder()

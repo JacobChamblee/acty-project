@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { API_BASE } from '../config';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { useUser, computeMaintenanceItems } from '../context/UserContext';
@@ -10,6 +11,7 @@ const NAV_ITEMS = [
   { icon: '🏠', label: 'Dashboard',  path: '/dashboard' },
   { icon: '📊', label: 'NeedleNest', path: '/needlenest' },
   { icon: '🤖', label: 'Insights',   path: '/insights' },
+  { icon: '📋', label: 'Sessions',   path: '/sessions' },
   { icon: '🚗', label: 'Vehicles',   path: '/vehicles' },
   { icon: '📤', label: 'Sharing',    path: '/sharing' },
 ];
@@ -19,13 +21,13 @@ export function Sidebar() {
   return (
     <div className="sidebar">
       <div className="sidebar-section-label">Main</div>
-      {NAV_ITEMS.slice(0, 3).map(n => (
+      {NAV_ITEMS.slice(0, 4).map(n => (
         <Link key={n.path} to={n.path} className={`sidebar-nav-item ${loc.pathname === n.path ? 'active' : ''}`}>
           <span>{n.icon}</span> {n.label}
         </Link>
       ))}
       <div className="sidebar-section-label">Manage</div>
-      {NAV_ITEMS.slice(3).map(n => (
+      {NAV_ITEMS.slice(4).map(n => (
         <Link key={n.path} to={n.path} className={`sidebar-nav-item ${loc.pathname === n.path ? 'active' : ''}`}>
           <span>{n.icon}</span> {n.label}
         </Link>
@@ -251,6 +253,15 @@ export default function Dashboard() {
 
   const maintenanceItems = computeMaintenanceItems(maintenance);
 
+  // Real sessions from API
+  const [liveSessions, setLiveSessions] = useState([]);
+  useEffect(() => {
+    fetch(`${API_BASE}/sessions`)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(data => setLiveSessions((data.sessions || []).filter(s => !s.error).slice(0, 5)))
+      .catch(() => {});
+  }, []);
+
   const vehicleName = activeVehicle
     ? [activeVehicle.year, activeVehicle.make, activeVehicle.model, activeVehicle.trim].filter(Boolean).join(' ')
     : null;
@@ -411,42 +422,68 @@ export default function Dashboard() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
               <div>
                 <div className="chart-card-title">Recent Sessions</div>
-                <div className="chart-card-sub" style={{ marginBottom: 0 }}>2024 Toyota GR86</div>
+                <div className="chart-card-sub" style={{ marginBottom: 0 }}>
+                  {liveSessions.length > 0 ? `${liveSessions.length} sessions · click to analyze` : 'No sessions synced yet'}
+                </div>
               </div>
-              <Link to="/insights" className="btn btn-ghost btn-sm">View all</Link>
+              <Link to="/sessions" className="btn btn-ghost btn-sm">View all</Link>
             </div>
-            <table className="sessions-table">
-              <thead>
-                <tr>
-                  <th>Session</th>
-                  <th>Date</th>
-                  <th>Duration</th>
-                  <th>Score</th>
-                  <th>LTFT B1</th>
-                  <th>DTCs</th>
-                </tr>
-              </thead>
-              <tbody>
-                {SESSIONS.map((s, i) => (
-                  <tr key={i}>
-                    <td><span className="session-id">{s.id}</span></td>
-                    <td style={{ color: '#475569', fontSize: '0.8125rem' }}>{s.date}</td>
-                    <td style={{ color: '#94A3B8', fontSize: '0.8125rem' }}>{s.duration}</td>
-                    <td>
-                      <span style={{ fontWeight: 700, color: s.score >= 75 ? '#10B981' : s.score >= 60 ? '#F59E0B' : '#EF4444' }}>
-                        {s.score}
-                      </span>
-                    </td>
-                    <td><span style={{ fontWeight: 600, color: '#F59E0B' }}>{s.ltft}</span></td>
-                    <td>
-                      {s.dtcs === 0
-                        ? <span className="badge badge-green">Clear</span>
-                        : <span className="badge badge-red">{s.dtcs} code{s.dtcs > 1 ? 's' : ''}</span>}
-                    </td>
+            {liveSessions.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '2rem 1rem', color: '#94A3B8' }}>
+                <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📂</div>
+                <div style={{ fontSize: '0.875rem' }}>
+                  No sessions on server.{' '}
+                  <Link to="/sessions" style={{ color: '#1E40AF', fontWeight: 600 }}>Upload a CSV</Link>
+                  {' '}or sync from the Android app.
+                </div>
+              </div>
+            ) : (
+              <table className="sessions-table">
+                <thead>
+                  <tr>
+                    <th>Session</th>
+                    <th>Date</th>
+                    <th>Duration</th>
+                    <th>Score</th>
+                    <th>LTFT B1</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {liveSessions.map(s => {
+                    const ltft = s.ltft_b1 ?? s.avg_ltft_b1;
+                    const label = s.filename
+                      .replace(/^acty_obd_/, '')
+                      .replace(/_[a-f0-9-]{36}\.csv$/, '')
+                      .replace(/\.csv$/, '');
+                    return (
+                      <tr
+                        key={s.filename}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => navigate(`/insights?session=${encodeURIComponent(s.filename)}`)}
+                        onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'}
+                        onMouseLeave={e => e.currentTarget.style.background = ''}
+                      >
+                        <td><span className="session-id">{label}</span></td>
+                        <td style={{ color: '#475569', fontSize: '0.8125rem' }}>{s.session_date || '—'}</td>
+                        <td style={{ color: '#94A3B8', fontSize: '0.8125rem' }}>
+                          {s.duration_min != null ? `${s.duration_min} min` : '—'}
+                        </td>
+                        <td>
+                          {s.health_score != null
+                            ? <span style={{ fontWeight: 700, color: s.health_score >= 75 ? '#10B981' : s.health_score >= 55 ? '#F59E0B' : '#EF4444' }}>{s.health_score}</span>
+                            : <span style={{ color: '#94A3B8' }}>—</span>}
+                        </td>
+                        <td>
+                          {ltft != null
+                            ? <span style={{ fontWeight: 600, color: Math.abs(ltft) > 8 ? '#EF4444' : '#F59E0B' }}>{ltft > 0 ? '+' : ''}{Number(ltft).toFixed(1)}%</span>
+                            : <span style={{ color: '#94A3B8' }}>—</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </motion.div>}
 
           {/* MPG trend */}

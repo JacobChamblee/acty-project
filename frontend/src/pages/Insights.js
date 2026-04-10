@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Sidebar } from './Dashboard';
 import { API_BASE } from '../config';
 import './Insights.css';
@@ -38,10 +39,13 @@ function ModelPill({ model, selected, onClick }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Insights() {
+  const [searchParams] = useSearchParams();
+  const preselect = searchParams.get('session');   // filename from /sessions click
+
   // Sessions
   const [sessions, setSessions]     = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
-  const [selectedSession, setSelectedSession] = useState(null);  // filename string
+  const [selectedSession, setSelectedSession] = useState(preselect || null);
 
   // Models
   const [models, setModels]         = useState([]);
@@ -72,7 +76,8 @@ export default function Insights() {
       .then(data => {
         const list = (data.sessions || []).filter(s => !s.error);
         setSessions(list);
-        if (list.length > 0) setSelectedSession(list[0].filename);
+        // Pre-select from URL param; fall back to most recent session
+        if (!preselect && list.length > 0) setSelectedSession(list[0].filename);
       })
       .catch(() => setSessions([]))
       .finally(() => setSessionsLoading(false));

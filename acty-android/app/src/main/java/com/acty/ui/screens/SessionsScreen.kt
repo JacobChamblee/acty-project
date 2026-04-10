@@ -37,9 +37,10 @@ import java.io.File
 
 @Composable
 fun SessionsScreen(
-    viewModel: SessionViewModel,
-    onShare:   (String) -> Unit,
-    onAnalyze: (String) -> Unit = {},   // filename → InsightsScreen
+    viewModel:       SessionViewModel,
+    onShare:         (String) -> Unit,
+    onAnalyze:       (String) -> Unit = {},   // filename → InsightsScreen
+    onManageDevices: () -> Unit        = {},   // → OBDDevicesScreen
 ) {
     val context      = LocalContext.current
     val scope        = rememberCoroutineScope()
@@ -72,12 +73,13 @@ fun SessionsScreen(
             .systemBarsPadding(),
     ) {
         SessionsHeader(
-            count       = sessions.size,
-            syncedCount = sessions.count { it.synced },
-            networkOk   = syncManager.isNetworkAvailable(),
-            wifiOnly    = prefs.syncWifiOnly,
-            isSyncing   = isSyncing,
-            syncStatus  = syncStatus,
+            count           = sessions.size,
+            syncedCount     = sessions.count { it.synced },
+            networkOk       = syncManager.isNetworkAvailable(),
+            wifiOnly        = prefs.syncWifiOnly,
+            isSyncing       = isSyncing,
+            syncStatus      = syncStatus,
+            onManageDevices = onManageDevices,
             onSync      = {
                 scope.launch {
                     isSyncing  = true
@@ -149,13 +151,14 @@ fun SessionsScreen(
 
 @Composable
 fun SessionsHeader(
-    count:      Int,
-    syncedCount: Int,
-    networkOk:  Boolean,
-    wifiOnly:   Boolean,
-    isSyncing:  Boolean,
-    syncStatus: String,
-    onSync:     () -> Unit,
+    count:           Int,
+    syncedCount:     Int,
+    networkOk:       Boolean,
+    wifiOnly:        Boolean,
+    isSyncing:       Boolean,
+    syncStatus:      String,
+    onSync:          () -> Unit,
+    onManageDevices: () -> Unit = {},
 ) {
     Box(
         modifier = Modifier
@@ -180,6 +183,33 @@ fun SessionsHeader(
                         text  = "$count sessions · $syncedCount synced",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                }
+
+                // Action buttons row
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+
+                // Manage Devices button
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(BgCardElevated)
+                        .border(0.5.dp, BgBorder, RoundedCornerShape(12.dp))
+                        .clickable(onClick = onManageDevices)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Outlined.Bluetooth, null,
+                            tint     = CactusBlue,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            text  = "Devices",
+                            style = MaterialTheme.typography.labelLarge.copy(color = CactusBlue),
+                        )
+                    }
                 }
 
                 // Sync button
@@ -218,6 +248,7 @@ fun SessionsHeader(
                         }
                     }
                 }
+                } // end Row (action buttons)
             }
 
             if (syncStatus.isNotEmpty()) {

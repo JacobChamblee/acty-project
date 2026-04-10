@@ -17,23 +17,25 @@ import com.acty.ui.screens.HomeScreen
 import com.acty.ui.screens.InsightsScreen
 import com.acty.ui.screens.LoginScreen
 import com.acty.ui.screens.NeedleNestScreen
+import com.acty.ui.screens.OBDDevicesScreen
 import com.acty.ui.screens.RegisterScreen
 import com.acty.ui.screens.SessionsScreen
 import com.acty.ui.screens.SharingScreen
 
 sealed class Screen(val route: String) {
-    object Login      : Screen("login")
-    object Register   : Screen("register")
-    object Home       : Screen("home")
-    object NeedleNest : Screen("needlenest")
-    object Capture    : Screen("capture")
-    object Sessions   : Screen("sessions")
-    object Account    : Screen("account")
-    object About      : Screen("about")
-    object Sharing    : Screen("sharing/{sessionId}") {
+    object Login       : Screen("login")
+    object Register    : Screen("register")
+    object Home        : Screen("home")
+    object NeedleNest  : Screen("needlenest")
+    object Capture     : Screen("capture")
+    object Sessions    : Screen("sessions")
+    object Account     : Screen("account")
+    object About       : Screen("about")
+    object OBDDevices  : Screen("obd_devices")
+    object Sharing     : Screen("sharing/{sessionId}") {
         fun go(sessionId: String) = "sharing/$sessionId"
     }
-    object Insights   : Screen("insights/{filename}") {
+    object Insights    : Screen("insights/{filename}") {
         fun go(filename: String) = "insights/${android.net.Uri.encode(filename)}"
     }
 }
@@ -104,10 +106,14 @@ fun ActyNavHost(
         }
         composable(Screen.Sessions.route) {
             SessionsScreen(
-                viewModel    = sessionViewModel,
-                onShare      = { id -> navController.navigate(Screen.Sharing.go(id)) },
-                onAnalyze    = { filename -> navController.navigate(Screen.Insights.go(filename)) },
+                viewModel      = sessionViewModel,
+                onShare        = { id -> navController.navigate(Screen.Sharing.go(id)) },
+                onAnalyze      = { filename -> navController.navigate(Screen.Insights.go(filename)) },
+                onManageDevices = { navController.navigate(Screen.OBDDevices.route) },
             )
+        }
+        composable(Screen.OBDDevices.route) {
+            OBDDevicesScreen(onBack = { navController.popBackStack() })
         }
         composable(
             route     = Screen.Insights.route,

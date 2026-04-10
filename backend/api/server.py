@@ -116,12 +116,14 @@ from api.routers.llm_config import router as llm_config_router
 from api.routers.insights import router as insights_router
 from api.routers.auth import router as auth_router
 from api.routers.ollama_router import router as ollama_router
+from api.routers.sessions_router import router as sessions_router
 from api.storage.truenas_writer import archive_session, archive_report, archive_csv
 
 app.include_router(llm_config_router)
 app.include_router(insights_router)
 app.include_router(auth_router)
 app.include_router(ollama_router)
+app.include_router(sessions_router)
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 def find_latest_csv() -> Optional[Path]:
