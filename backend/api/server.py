@@ -44,17 +44,43 @@ THRESHOLDS = {
     "RPM":               {"warn": 5000,"crit": 6000, "unit": "rpm", "label": "RPM"},
 }
 
-# ── database connection factory ─────────────────────────────────────────────────
-async def get_db_connection():
-    """Create a new database connection for each request."""
+# ── database connection pool ──────────────────────────────────────────────────
+# Initialised in lifespan; module-level so all routers can import get_db_connection().
+
+_db_pool: "asyncpg.Pool | None" = None
+
+
+async def get_db_connection() -> asyncpg.Connection:
+    """
+    Return a pooled connection when the pool is up, or a direct connection
+    as fallback. Callers are responsible for releasing / closing.
+    """
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured")
+    if _db_pool is not None:
+        return await _db_pool.acquire()
     return await asyncpg.connect(DATABASE_URL)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Validate BYOK key encryption key at startup — fail fast rather than 503 mid-request
+    global _db_pool
+
+    # ── DB connection pool ────────────────────────────────────────────────────
+    if DATABASE_URL:
+        try:
+            _db_pool = await asyncpg.create_pool(
+                DATABASE_URL,
+                min_size=2,
+                max_size=10,
+                command_timeout=30,
+            )
+            print("[db] Connection pool established (min=2, max=10)")
+        except Exception as e:
+            _db_pool = None
+            print(f"[db] Pool creation failed — falling back to per-request connections: {e}")
+
+    # ── BYOK key validation ───────────────────────────────────────────────────
     try:
         from llm.key_encryption import _load_master_key
         _load_master_key()
@@ -62,15 +88,12 @@ async def lifespan(app: FastAPI):
     except (EnvironmentError, ValueError) as e:
         print(f"[byok] WARNING: {e} — BYOK key registration/decryption will fail")
 
-    if DATABASE_URL:
-        try:
-            # Test connection during startup
-            conn = await get_db_connection()
-            await conn.close()
-            print(f"[db] Connected to PostgreSQL")
-        except Exception as e:
-            print(f"[db] Could not connect to PostgreSQL: {e}")
     yield
+
+    # ── Shutdown ──────────────────────────────────────────────────────────────
+    if _db_pool is not None:
+        await _db_pool.close()
+        print("[db] Connection pool closed")
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────

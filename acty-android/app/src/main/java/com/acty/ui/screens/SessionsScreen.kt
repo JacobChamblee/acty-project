@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.acty.data.ActyPrefs
+import com.acty.data.AuthManager
 import com.acty.data.SyncManager
 import com.acty.model.SessionSummary
 import com.acty.ui.SessionViewModel
@@ -46,6 +47,7 @@ fun SessionsScreen(
     val scope        = rememberCoroutineScope()
     val prefs        = remember { ActyPrefs(context) }
     val syncManager  = remember { SyncManager(context) }
+    val authManager  = remember { AuthManager(context) }
 
     var sessions    by remember { mutableStateOf<List<SessionSummary>>(emptyList()) }
     var syncStatus  by remember { mutableStateOf("") }
@@ -85,9 +87,11 @@ fun SessionsScreen(
                     isSyncing  = true
                     syncStatus = "Syncing…"
                     val active = prefs.activeVehicle()
+                    val token  = authManager.getAccessToken()
                     val results = syncManager.syncPendingFiles(
-                        wifiOnly  = prefs.syncWifiOnly,
-                        vehicleId = active?.id ?: "unknown",
+                        wifiOnly    = prefs.syncWifiOnly,
+                        vehicleId   = active?.id ?: "unknown",
+                        accessToken = token,
                     )
                     val ok     = results.count { it.second }
                     val failed = results.count { !it.second }
@@ -363,10 +367,10 @@ fun SessionRow(session: SessionSummary, onAnalyze: () -> Unit = {}, onShare: () 
                     }
                 }
 
-                val (badgeText, badgeColor, badgeBg) = if (session.synced) {
-                    Triple("SYNCED", StatusGreenDim, StatusGreenBg)
-                } else {
-                    Triple("PENDING", StatusAmber, StatusAmberBg)
+                val (badgeText, badgeColor, badgeBg) = when {
+                    session.synced     -> Triple("SYNCED",     StatusGreenDim,        StatusGreenBg)
+                    session.syncFailed -> Triple("NOT SYNCED", Color(0xFFEF4444),     Color(0xFFFEE2E2))
+                    else               -> Triple("PENDING",    StatusAmber,           StatusAmberBg)
                 }
                 Text(
                     text  = badgeText,
@@ -472,6 +476,7 @@ private suspend fun loadSessions(syncManager: SyncManager): List<SessionSummary>
     withContext(Dispatchers.IO) {
         val dataDir  = syncManager.dataDir
         val manifest = syncManager.syncedFileNames()
+        val failed   = syncManager.failedFileNames()
 
         val csvFiles = dataDir.listFiles { f ->
             f.name.startsWith("acty_obd_") && f.name.endsWith(".csv")
@@ -497,6 +502,7 @@ private suspend fun loadSessions(syncManager: SyncManager): List<SessionSummary>
                     fileName    = f.name,
                     sizeKb      = f.length() / 1024.0,
                     synced      = f.name in manifest,
+                    syncFailed  = f.name !in manifest && f.name in failed,
                 )
             }
     }

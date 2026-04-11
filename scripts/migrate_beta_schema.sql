@@ -81,6 +81,33 @@ INSERT INTO vehicles (vehicle_id, make, model, year, engine)
 VALUES ('default', 'Toyota', 'GR86', 2023, 'FA24')
 ON CONFLICT (vehicle_id) DO NOTHING;
 
+-- ── Fix 6: PostgreSQL-backed insights job store ──────────────────────────────
+-- Replaces the in-memory asyncio.Queue store with a durable table.
+-- Metadata (provider, model, status) persisted for observability and recovery.
+-- Active token streaming still uses in-memory queues on the same instance;
+-- this table is the source-of-truth for job lifecycle and completion.
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id          UUID PRIMARY KEY,
+    user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
+    vehicle_id  TEXT REFERENCES vehicles(vehicle_id) ON DELETE SET NULL,
+    provider    TEXT NOT NULL,
+    model_id    TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',   -- pending | running | complete | error
+    error       TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_user_id   ON jobs(user_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_status    ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_created   ON jobs(created_at DESC);
+
+-- Auto-update updated_at
+CREATE TRIGGER trg_jobs_updated_at
+    BEFORE UPDATE ON jobs
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
 -- ── Verification ──────────────────────────────────────────────────────────────
 -- Run this query after migration to confirm all tables exist:
 -- SELECT table_name FROM information_schema.tables
@@ -88,5 +115,5 @@ ON CONFLICT (vehicle_id) DO NOTHING;
 --
 -- Expected tables:
 --   alerts, anomaly_results, app_user_accounts, diagnostic_reports,
---   maintenance_predictions, obd_adapters, ollama_analyses,
+--   jobs, maintenance_predictions, obd_adapters, ollama_analyses,
 --   session_rows, sessions, user_llm_configs, users, vehicles

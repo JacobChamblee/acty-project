@@ -88,6 +88,81 @@ class ActyPrefs(private val context: Context) {
 
     fun activeVehicle(): VehicleEntry? = loadVehicles().firstOrNull { it.isActive }
 
+    // ── OBD adapter list ──────────────────────────────────────────────────────
+    // Richer than the legacy single-adapter obdMacAddress / obdDeviceName fields.
+    // Persists all known adapters per device so the user can pick any paired dongle.
+
+    fun saveAdapters(adapters: List<ObdAdapter>) {
+        val arr = JSONArray()
+        adapters.forEach { a ->
+            arr.put(JSONObject().apply {
+                put("mac",         a.macAddress)
+                put("name",        a.name)
+                put("type",        a.adapterType)
+                put("default",     a.isDefault)
+                put("pids",        JSONArray(a.supportedPids))
+            })
+        }
+        prefs.edit().putString("obd_adapters", arr.toString()).apply()
+    }
+
+    fun loadAdapters(): List<ObdAdapter> {
+        val json = prefs.getString("obd_adapters", null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                val pidsArr = o.optJSONArray("pids") ?: JSONArray()
+                ObdAdapter(
+                    macAddress     = o.optString("mac", ""),
+                    name           = o.optString("name", ""),
+                    adapterType    = o.optString("type", "unknown"),
+                    isDefault      = o.optBoolean("default", false),
+                    supportedPids  = (0 until pidsArr.length()).map { pidsArr.getString(it) },
+                )
+            }
+        } catch (_: Exception) { emptyList() }
+    }
+
+    fun upsertAdapter(adapter: ObdAdapter) {
+        val existing = loadAdapters().filter { it.macAddress != adapter.macAddress }
+        // If this is set as default, clear default from others
+        val updated = if (adapter.isDefault) {
+            existing.map { it.copy(isDefault = false) } + adapter
+        } else {
+            existing + adapter
+        }
+        saveAdapters(updated)
+        // Keep legacy single-mac fields in sync for ObdCaptureService
+        if (adapter.isDefault || updated.size == 1) {
+            obdMacAddress  = adapter.macAddress
+            obdDeviceName  = adapter.name
+        }
+    }
+
+    fun defaultAdapter(): ObdAdapter? =
+        loadAdapters().firstOrNull { it.isDefault } ?: loadAdapters().firstOrNull()
+
+    // ── Sync failure tracking ─────────────────────────────────────────────────
+    // Tracks filenames where a sync upload was attempted but failed.
+    // Separate from the .sync_manifest (successful syncs) so the UI can show
+    // NOT SYNCED (red) vs PENDING (amber) vs SYNCED (green).
+
+    fun markSyncFailed(filename: String) {
+        val failed = failedSyncFileNames().toMutableSet()
+        failed.add(filename)
+        prefs.edit().putStringSet("sync_failed", failed).apply()
+    }
+
+    fun clearSyncFailed(filename: String) {
+        val failed = failedSyncFileNames().toMutableSet()
+        failed.remove(filename)
+        prefs.edit().putStringSet("sync_failed", failed).apply()
+    }
+
+    fun failedSyncFileNames(): Set<String> =
+        prefs.getStringSet("sync_failed", emptySet()) ?: emptySet()
+
     // ── Sync settings ─────────────────────────────────────────────────────────
 
     var syncWifiOnly: Boolean
@@ -97,6 +172,22 @@ class ActyPrefs(private val context: Context) {
     var syncFrequencyLabel: String
         get() = prefs.getString("sync_frequency", "Per Drive") ?: "Per Drive"
         set(v) = prefs.edit().putString("sync_frequency", v).apply()
+
+    // ── Supabase JWT (encrypted) ──────────────────────────────────────────────
+    // Stored after OAuth callback or Supabase email/password sign-in.
+    // Used by SyncManager to attach Authorization headers to API calls.
+
+    var supabaseAccessToken: String
+        get()  = try { encryptedPrefs.getString("sb_access_token", "") ?: "" } catch (_: Exception) { "" }
+        set(v) = try { encryptedPrefs.edit().putString("sb_access_token", v).apply() } catch (_: Exception) {}
+
+    var supabaseRefreshToken: String
+        get()  = try { encryptedPrefs.getString("sb_refresh_token", "") ?: "" } catch (_: Exception) { "" }
+        set(v) = try { encryptedPrefs.edit().putString("sb_refresh_token", v).apply() } catch (_: Exception) {}
+
+    fun clearSupabaseTokens() {
+        try { encryptedPrefs.edit().remove("sb_access_token").remove("sb_refresh_token").apply() } catch (_: Exception) {}
+    }
 
     // ── BYOK (encrypted) ──────────────────────────────────────────────────────
 
@@ -117,4 +208,12 @@ data class VehicleEntry(
     val drivetrain: String = "",
     val obdMac:     String = "",
     val isActive:   Boolean = false,
+)
+
+data class ObdAdapter(
+    val macAddress:    String,
+    val name:          String,
+    val adapterType:   String        = "unknown",
+    val isDefault:     Boolean       = false,
+    val supportedPids: List<String>  = emptyList(),
 )

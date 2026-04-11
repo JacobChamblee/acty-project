@@ -40,13 +40,13 @@ from .llm_config import VALID_PROVIDERS, current_user_id, fetch_decrypted_key, g
 
 router = APIRouter(prefix="/api/v1/insights", tags=["insights"])
 
-# ── Job store (dev: in-memory asyncio.Queue) ──────────────────────────────────
-# Production: replace with Redis pub/sub. Client subscribes to job channel.
-# Each token published to channel is forwarded to the SSE response.
+# ── Job store (hybrid: in-memory queue + PostgreSQL persistence) ──────────────
+# Active streaming uses asyncio.Queue (single-instance, zero-latency).
+# Job lifecycle (created/running/complete/error) is persisted to the jobs table
+# so status survives restarts and is visible to monitoring / MCP tools.
 
 _job_store: dict[str, asyncio.Queue] = {}
 _job_meta: dict[str, dict] = {}
-_JOB_TTL_SECONDS = 600  # 10 minutes
 
 
 def _new_job(job_id: str, provider: str, model_id: str) -> asyncio.Queue:
@@ -66,6 +66,48 @@ def _get_job_queue(job_id: str) -> asyncio.Queue:
     if q is None:
         raise HTTPException(404, f"Job {job_id!r} not found or expired")
     return q
+
+
+async def _persist_job(
+    job_id: str,
+    provider: str,
+    model_id: str,
+    user_id: uuid.UUID,
+    vehicle_id: str | None = None,
+) -> None:
+    """Insert initial job row into PostgreSQL (best-effort, non-blocking)."""
+    try:
+        from api.server import get_db_connection
+        conn = await get_db_connection()
+        try:
+            await conn.execute(
+                """
+                INSERT INTO jobs (id, user_id, vehicle_id, provider, model_id, status)
+                VALUES ($1, $2, $3, $4, $5, 'pending')
+                ON CONFLICT (id) DO NOTHING
+                """,
+                uuid.UUID(job_id), user_id, vehicle_id, provider, model_id,
+            )
+        finally:
+            await conn.close()
+    except Exception:
+        pass  # job store is best-effort — never block the 202 response
+
+
+async def _update_job_status(job_id: str, status: str, error: str | None = None) -> None:
+    """Update job status in PostgreSQL (best-effort)."""
+    try:
+        from api.server import get_db_connection
+        conn = await get_db_connection()
+        try:
+            await conn.execute(
+                "UPDATE jobs SET status = $2, error = $3, updated_at = NOW() WHERE id = $1",
+                uuid.UUID(job_id), status, error,
+            )
+        finally:
+            await conn.close()
+    except Exception:
+        pass
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -105,11 +147,13 @@ async def _run_llm_generation(
         return
 
     _job_meta[job_id]["status"] = "running"
+    await _update_job_status(job_id, "running")
     try:
         provider = get_provider(provider_id)
         async for token in provider.stream_insight(cactus_prompt, model_id, api_key):
             await q.put(token)
         _job_meta[job_id]["status"] = "complete"
+        await _update_job_status(job_id, "complete")
     except Exception as exc:
         if provider_id != "local":
             try:
@@ -123,10 +167,12 @@ async def _run_llm_generation(
                 ):
                     await q.put(token)
                 _job_meta[job_id]["status"] = "complete"
+                await _update_job_status(job_id, "complete")
                 return
             except Exception as fallback_exc:
                 exc = fallback_exc
         _job_meta[job_id]["status"] = "error"
+        await _update_job_status(job_id, "error", str(exc)[:500])
         await q.put(exc)
     finally:
         await q.put(None)  # sentinel — SSE handler closes the stream
@@ -378,6 +424,11 @@ async def generate_insight(
     # Create job + start background generation
     job_id = str(uuid.uuid4())
     _new_job(job_id, provider_id, model_id)
+
+    # Persist job record to PostgreSQL (fire-and-forget)
+    background_tasks.add_task(
+        _persist_job, job_id, provider_id, model_id, user_id, body.vehicle_id,
+    )
 
     background_tasks.add_task(
         _run_llm_generation,

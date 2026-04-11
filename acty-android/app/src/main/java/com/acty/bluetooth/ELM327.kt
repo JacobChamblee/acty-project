@@ -165,6 +165,28 @@ class ELM327(
         return supported
     }
 
+    // ── Adapter type detection ────────────────────────────────────────────
+    //
+    // Sends ATI, AT@1, and AT@2 then maps the combined response to a known
+    // adapter_type string. Must be called AFTER init() completes.
+
+    fun detectAdapterType(): String {
+        val ati = send("ATI",  2000L).uppercase()
+        val at1 = send("AT@1", 2000L).uppercase()
+        val at2 = send("AT@2", 2000L).uppercase()
+        Log.d(TAG, "Adapter detection — ATI=$ati  AT@1=$at1  AT@2=$at2")
+
+        return when {
+            "VGATE" in at1 && ("PRO 2S" in at1 || "ICAR PRO" in at1) -> "vgate_icar_pro_2s"
+            "VEEPEAK" in ati || "VEEPEAK" in at1 || "VEEPEAK" in at2  -> "veepeak_ble"
+            "VGATE" in at1 && ("BLE" in at1 || "4.0" in at1)          -> "vgate_ble_4"
+            "VGATE" in at1                                              -> "vgate_icar_pro_2s"
+            "BAFX" in ati  || "BAFX" in at1                            -> "bafx"
+            "OBDLINK" in ati || "OBDLINK" in at1                       -> "obdlink_cx"
+            else                                                         -> "unknown"
+        }
+    }
+
     // ── Mode 03 DTC read ──────────────────────────────────────────────────
 
     fun getDtcs(): List<String> {

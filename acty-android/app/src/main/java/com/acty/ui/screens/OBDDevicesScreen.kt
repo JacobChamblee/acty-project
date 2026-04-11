@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.acty.data.ActyPrefs
+import com.acty.data.ObdAdapter
 import com.acty.ui.theme.*
 
 // ── OBDDevicesScreen ──────────────────────────────────────────────────────────
@@ -216,10 +217,17 @@ fun OBDDevicesScreen(onBack: () -> Unit) {
                                 device      = dev,
                                 isSelected  = dev.address == selectedMac,
                                 onSelect    = {
-                                    prefs.obdMacAddress  = dev.address
-                                    prefs.obdDeviceName  = dev.name
-                                    selectedMac          = dev.address
-                                    savedBanner          = true
+                                    prefs.obdMacAddress = dev.address
+                                    prefs.obdDeviceName = dev.name
+                                    selectedMac         = dev.address
+                                    savedBanner         = true
+                                    // Persist to adapter list (isDefault = true)
+                                    prefs.upsertAdapter(ObdAdapter(
+                                        macAddress  = dev.address,
+                                        name        = dev.name,
+                                        adapterType = "unknown",  // updated after ELM327 connect
+                                        isDefault   = true,
+                                    ))
                                 },
                             )
                         }
@@ -237,6 +245,12 @@ fun OBDDevicesScreen(onBack: () -> Unit) {
                                     prefs.obdDeviceName = dev.name
                                     selectedMac         = dev.address
                                     savedBanner         = true
+                                    prefs.upsertAdapter(ObdAdapter(
+                                        macAddress  = dev.address,
+                                        name        = dev.name,
+                                        adapterType = "unknown",
+                                        isDefault   = true,
+                                    ))
                                 },
                             )
                         }

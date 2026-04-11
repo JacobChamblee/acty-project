@@ -77,6 +77,7 @@ data class SessionSummary(
     val fileName: String,
     val sizeKb: Double,
     val synced: Boolean,
+    val syncFailed: Boolean = false,  // sync was attempted but failed → show NOT SYNCED badge
     val durationMinutes: Int = 0,
     val sampleCount: Int = 0,
     val vehicleId: String? = null,

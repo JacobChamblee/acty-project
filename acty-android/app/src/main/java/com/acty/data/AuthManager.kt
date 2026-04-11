@@ -356,6 +356,8 @@ class AuthManager(private val context: Context) {
             val remoteAccount = remote.account
             return if (remoteAccount != null) {
                 persistAccount(remoteAccount)
+                // Fire-and-forget: obtain a Supabase JWT for authenticated API calls
+                backgroundScope.launch { loginWithSupabase(normalizedEmail, password) }
                 AuthResult.Success
             } else {
                 AuthResult.Error(remote.error ?: "No account found for that email.")
@@ -364,15 +366,18 @@ class AuthManager(private val context: Context) {
 
         return if (localAccount.pwHash.isEmpty()) {
             persistAccount(localAccount.copy(pwHash = hash), pushRemote = true)
+            backgroundScope.launch { loginWithSupabase(normalizedEmail, password) }
             AuthResult.Success
         } else if (hash == localAccount.pwHash) {
             _sessionEmail = localAccount.email.lowercase()
+            backgroundScope.launch { loginWithSupabase(normalizedEmail, password) }
             AuthResult.Success
         } else {
             val remote = loginRemote(normalizedEmail, hash)
             val remoteAccount = remote.account
             if (remoteAccount != null) {
                 persistAccount(remoteAccount)
+                backgroundScope.launch { loginWithSupabase(normalizedEmail, password) }
                 AuthResult.Success
             } else {
                 AuthResult.Error(remote.error ?: "Incorrect password.")
@@ -409,6 +414,83 @@ class AuthManager(private val context: Context) {
         return AuthResult.Success
     }
 
+    // ── Supabase JWT access ───────────────────────────────────────────────────
+    // Returns the stored Supabase access_token, or null if not logged in via Supabase.
+    // Used by SyncManager to attach Authorization: Bearer <token> to API calls.
+
+    fun getAccessToken(): String? {
+        val prefs = ActyPrefs(context)
+        return prefs.supabaseAccessToken.ifBlank { null }
+    }
+
+    private fun storeSupabaseTokens(accessToken: String, refreshToken: String) {
+        val prefs = ActyPrefs(context)
+        prefs.supabaseAccessToken  = accessToken
+        prefs.supabaseRefreshToken = refreshToken
+    }
+
+    /**
+     * Authenticate via Supabase REST API using email + password and store the JWT.
+     * Called after a successful custom-backend login so the Supabase token is
+     * available for authenticated API calls (e.g. /api/v1/sessions/sync).
+     * Returns the access_token on success, null on failure.
+     */
+    suspend fun loginWithSupabase(email: String, password: String): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val body = JSONObject()
+                    .put("email", email.lowercase())
+                    .put("password", password)
+                    .toString()
+                    .toRequestBody(jsonMediaType)
+                val request = Request.Builder()
+                    .url("${ActyConfig.SUPABASE_URL}/auth/v1/token?grant_type=password")
+                    .addHeader("apikey", ActyConfig.SUPABASE_ANON_KEY)
+                    .addHeader("Content-Type", "application/json")
+                    .post(body)
+                    .build()
+
+                httpClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) return@withContext null
+                    val payload = JSONObject(resp.body?.string() ?: return@withContext null)
+                    val accessToken  = payload.optString("access_token",  "").ifBlank { null } ?: return@withContext null
+                    val refreshToken = payload.optString("refresh_token", "")
+                    storeSupabaseTokens(accessToken, refreshToken)
+                    accessToken
+                }
+            } catch (_: Exception) { null }
+        }
+
+    /**
+     * Refresh a Supabase JWT using the stored refresh_token.
+     * Automatically stores the new tokens on success.
+     */
+    suspend fun refreshSupabaseToken(): String? = withContext(Dispatchers.IO) {
+        val prefs = ActyPrefs(context)
+        val refreshToken = prefs.supabaseRefreshToken.ifBlank { return@withContext null }
+        try {
+            val body = JSONObject()
+                .put("refresh_token", refreshToken)
+                .toString()
+                .toRequestBody(jsonMediaType)
+            val request = Request.Builder()
+                .url("${ActyConfig.SUPABASE_URL}/auth/v1/token?grant_type=refresh_token")
+                .addHeader("apikey", ActyConfig.SUPABASE_ANON_KEY)
+                .addHeader("Content-Type", "application/json")
+                .post(body)
+                .build()
+
+            httpClient.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val payload = JSONObject(resp.body?.string() ?: return@withContext null)
+                val accessToken  = payload.optString("access_token",  "").ifBlank { null } ?: return@withContext null
+                val newRefresh   = payload.optString("refresh_token", refreshToken)
+                storeSupabaseTokens(accessToken, newRefresh)
+                accessToken
+            }
+        } catch (_: Exception) { null }
+    }
+
     // ── Google OAuth via Chrome Custom Tabs ───────────────────────────────────
 
     fun loginWithGoogle(context: Context) {
@@ -426,7 +508,10 @@ class AuthManager(private val context: Context) {
             val pair = it.split("=", limit = 2)
             (pair.getOrNull(0) ?: "") to (pair.getOrNull(1) ?: "")
         }
-        val accessToken = params["access_token"] ?: return@withContext false
+        val accessToken  = params["access_token"]  ?: return@withContext false
+        val refreshToken = params["refresh_token"] ?: ""
+        // Store Supabase tokens for authenticated API calls
+        storeSupabaseTokens(accessToken, refreshToken)
 
         try {
             // 1. Fetch profile info from Supabase (for latest avatar/name)
@@ -481,6 +566,7 @@ class AuthManager(private val context: Context) {
 
     fun logout() {
         prefs.edit().remove("auth_session").apply()
+        ActyPrefs(context).clearSupabaseTokens()
     }
 
     fun deleteAccount() {

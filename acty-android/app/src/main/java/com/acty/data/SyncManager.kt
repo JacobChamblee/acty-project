@@ -2,6 +2,7 @@ package com.acty.data
 
 import android.content.Context
 import android.net.ConnectivityManager
+import com.acty.data.ActyPrefs
 import android.net.NetworkCapabilities
 import android.util.Base64
 import android.util.Log
@@ -72,14 +73,18 @@ class SyncManager(private val context: Context) {
 
     /**
      * Upload all pending CSVs.
-     * @param wifiOnly  When true, aborts if not on WiFi.
-     * @param vehicleId Vehicle identifier to tag uploads with.
-     * @param onProgress Callback per file: (fileName, success).
+     * @param wifiOnly    When true, aborts if not on WiFi.
+     * @param vehicleId   Vehicle identifier to tag uploads with.
+     * @param accessToken Supabase JWT — attached as Authorization: Bearer header.
+     *                    Without this the backend will return 401. Obtain via
+     *                    AuthManager.getAccessToken().
+     * @param onProgress  Callback per file: (fileName, success).
      */
     suspend fun syncPendingFiles(
-        wifiOnly:   Boolean = true,
-        vehicleId:  String = "unknown",
-        onProgress: (String, Boolean) -> Unit = { _, _ -> },
+        wifiOnly:    Boolean = true,
+        vehicleId:   String  = "unknown",
+        accessToken: String? = null,
+        onProgress:  (String, Boolean) -> Unit = { _, _ -> },
     ): List<Pair<String, Boolean>> = withContext(Dispatchers.IO) {
         // Network gate
         if (wifiOnly && !isOnWifi()) {
@@ -104,9 +109,15 @@ class SyncManager(private val context: Context) {
         Log.d(TAG, "Syncing ${csvFiles.size} file(s) [wifiOnly=$wifiOnly]")
         val results = mutableListOf<Pair<String, Boolean>>()
 
+        val prefs = ActyPrefs(context)
         for (file in csvFiles) {
-            val ok = uploadFile(file, vehicleId)
-            if (ok) synced.add(file.name)
+            val ok = uploadFile(file, vehicleId, accessToken)
+            if (ok) {
+                synced.add(file.name)
+                prefs.clearSyncFailed(file.name)   // clear any previous failure flag
+            } else {
+                prefs.markSyncFailed(file.name)     // record failure for UI badge
+            }
             results.add(file.name to ok)
             onProgress(file.name, ok)
             Log.d(TAG, "  ${file.name}: ${if (ok) "✓" else "✗"}")
@@ -116,7 +127,7 @@ class SyncManager(private val context: Context) {
         results
     }
 
-    private fun uploadFile(file: File, vehicleId: String): Boolean {
+    private fun uploadFile(file: File, vehicleId: String, accessToken: String?): Boolean {
         val sigFile = File(file.parentFile, file.nameWithoutExtension + ".sig")
         if (!sigFile.exists()) {
             Log.w(TAG, "Missing .sig for ${file.name} — skipping")
@@ -135,9 +146,12 @@ class SyncManager(private val context: Context) {
         }.toString()
 
         return try {
-            val body    = payload.toRequestBody("application/json".toMediaTypeOrNull())
-            val request = Request.Builder().url(UPLOAD_URL).post(body).build()
-            client.newCall(request).execute().use { it.isSuccessful }
+            val body = payload.toRequestBody("application/json".toMediaTypeOrNull())
+            val reqBuilder = Request.Builder().url(UPLOAD_URL).post(body)
+            if (!accessToken.isNullOrBlank()) {
+                reqBuilder.addHeader("Authorization", "Bearer $accessToken")
+            }
+            client.newCall(reqBuilder.build()).execute().use { it.isSuccessful }
         } catch (e: Exception) {
             Log.e(TAG, "Upload failed for ${file.name}: ${e.message}")
             false
@@ -147,4 +161,6 @@ class SyncManager(private val context: Context) {
     // ── Manifest read for UI ──────────────────────────────────────────────────
 
     fun syncedFileNames(): Set<String> = loadManifest()
+
+    fun failedFileNames(): Set<String> = ActyPrefs(context).failedSyncFileNames()
 }

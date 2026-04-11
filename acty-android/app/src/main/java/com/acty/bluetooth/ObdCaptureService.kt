@@ -151,15 +151,29 @@ class ObdCaptureService : Service() {
         // ── Bluetooth connect ─────────────────────────────────────────────
         val btAdapter = BluetoothAdapter.getDefaultAdapter()
         val device: BluetoothDevice = btAdapter.getRemoteDevice(address)
-        val sock = try {
-            device.createRfcommSocketToServiceRecord(SPP_UUID).also {
-                btAdapter.cancelDiscovery()
-                it.connect()
+
+        // ── RFCOMM connect with retry (3 attempts, exponential backoff) ───────
+        var sock: BluetoothSocket? = null
+        var lastError: String? = null
+        for (attempt in 1..3) {
+            try {
+                btAdapter.cancelDiscovery()           // always cancel before connect
+                sock = device.createRfcommSocketToServiceRecord(SPP_UUID)
+                sock.connect()
+                Log.d(TAG, "BT connected on attempt $attempt")
+                break
+            } catch (e: IOException) {
+                lastError = e.message
+                Log.w(TAG, "BT connect attempt $attempt/3 failed: ${e.message}")
+                try { sock?.close() } catch (_: Exception) {}
+                sock = null
+                if (attempt < 3) delay(attempt * 1500L)   // 1.5s → 3s backoff
             }
-        } catch (e: IOException) {
-            Log.e(TAG, "BT connect failed: ${e.message}")
-            updateStatus("Connection failed: ${e.message}")
-            _events.emit(SessionEvent.Error("Bluetooth connection failed: ${e.message}"))
+        }
+        if (sock == null) {
+            Log.e(TAG, "BT connect failed after 3 attempts: $lastError")
+            updateStatus("Connection failed: $lastError")
+            _events.emit(SessionEvent.Error("Bluetooth connection failed after 3 attempts: $lastError"))
             stopSelf()
             return
         }
@@ -168,6 +182,17 @@ class ObdCaptureService : Service() {
         val elm = ELM327(sock.inputStream, sock.outputStream)
         updateStatus("Initializing ELM327…")
         elm.init()
+
+        // ── Adapter type detection ────────────────────────────────────────
+        updateStatus("Identifying adapter…")
+        val adapterType = elm.detectAdapterType()
+        Log.d(TAG, "Adapter type: $adapterType")
+        val prefs = com.acty.data.ActyPrefs(this@ObdCaptureService)
+        prefs.defaultAdapter()?.let { known ->
+            if (known.macAddress == address) {
+                prefs.upsertAdapter(known.copy(adapterType = adapterType))
+            }
+        }
 
         // ── VIN query ─────────────────────────────────────────────────────
         updateStatus("Querying VIN…")
@@ -288,7 +313,6 @@ class ObdCaptureService : Service() {
     // ── WiFi sync ─────────────────────────────────────────────────────────
 
     private fun triggerSync() {
-        // Read wifi-only setting from prefs; default to WiFi-only for safety
         val prefs    = com.acty.data.ActyPrefs(this)
         val wifiOnly = prefs.syncWifiOnly
         if (wifiOnly && !syncManager.isOnWifi()) {
@@ -299,10 +323,12 @@ class ObdCaptureService : Service() {
             Log.d(TAG, "No network — sync deferred")
             return
         }
+        val accessToken = prefs.supabaseAccessToken.ifBlank { null }
         serviceScope.launch {
             syncManager.syncPendingFiles(
-                wifiOnly  = wifiOnly,
-                vehicleId = vehicleId,
+                wifiOnly    = wifiOnly,
+                vehicleId   = vehicleId,
+                accessToken = accessToken,
             ) { fileName, success ->
                 serviceScope.launch {
                     if (success) _events.emit(SessionEvent.SyncComplete(fileName))
