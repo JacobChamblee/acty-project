@@ -64,6 +64,8 @@ MCP_PORT      = int(os.getenv("MCP_PORT", "8767"))
 
 mcp = FastMCP(
     "Acty",
+    host=MCP_HOST,
+    port=MCP_PORT,
     instructions=(
         "You have access to the Acty/Cactus vehicle telemetry platform. "
         "Use these tools to query OBD session data, run diagnostics, "
@@ -602,6 +604,6 @@ async def platform_health() -> dict:
 if __name__ == "__main__":
     if MCP_TRANSPORT == "sse":
         print(f"[acty-mcp] Starting SSE server on {MCP_HOST}:{MCP_PORT}")
-        mcp.run(transport="sse", host=MCP_HOST, port=MCP_PORT)
+        mcp.run(transport="sse")
     else:
         mcp.run()
