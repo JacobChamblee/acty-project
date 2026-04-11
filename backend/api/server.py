@@ -20,7 +20,7 @@ import asyncpg
 import numpy as np
 import pandas as pd
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from ml.pipeline.report import generate_diagnostic_report
@@ -80,27 +80,23 @@ app = FastAPI(title="Acty Mobile API", version="0.1.0", lifespan=lifespan)
 # Production domains: acty-labs.com and subdomains
 # Development: localhost and 192.168.68.138 (local network for mobile testing)
 CORS_ORIGINS = [
-    # Production domain and subdomains
+    # App — cactus-app.io (Cloudflare Pages)
+    "https://cactus-app.io",
+    "https://www.cactus-app.io",
+    # API domain
+    "https://api.acty-labs.com",
+    # Company site (read-only pages only — NOT the app)
     "https://acty-labs.com",
     "https://www.acty-labs.com",
-    "https://api.acty-labs.com",
-    "https://dashboard.acty-labs.com",
-    
-    # Staging domains (if used)
-    "https://staging.acty-labs.com",
-    "https://api.staging.acty-labs.com",
-    
     # Development and testing
     "http://localhost:3000",      # Frontend dev server
+    "http://localhost:5173",      # Vite dev server
     "http://localhost:8765",      # API dev server
-    "http://localhost:5000",      # Alt frontend port
     "http://127.0.0.1:3000",
-    "http://127.0.0.1:8765",
-    
+    "http://127.0.0.1:5173",
     # Local network (for mobile app testing)
     "http://192.168.68.138:3000",
     "http://192.168.68.138:8765",
-    "http://192.168.68.1:8765",   # Gateway IP fallback
 ]
 
 app.add_middleware(
@@ -112,6 +108,7 @@ app.add_middleware(
 )
 
 # ── BYOK LLM routers ──────────────────────────────────────────────────────────
+from api.deps import get_current_user
 from api.routers.llm_config import router as llm_config_router
 from api.routers.insights import router as insights_router
 from api.routers.auth import router as auth_router
@@ -759,7 +756,10 @@ async def health():
     }
 
 @app.get("/insights")
-async def insights(session: Optional[str] = None):
+async def insights(
+    session: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
     """
     Main endpoint. Returns:
       - session summary stats
@@ -803,7 +803,10 @@ async def insights(session: Optional[str] = None):
 
 # ── report endpoint ───────────────────────────────────────────────────────────
 @app.post("/api/v1/report")
-async def diagnostic_report(payload: dict):
+async def diagnostic_report(
+    payload: dict,
+    user: dict = Depends(get_current_user),
+):
     """
     Generate a RAG-grounded diagnostic report.
     Expects: { dtc_codes, anomalies, vehicle_data, vehicle_id }
@@ -826,8 +829,8 @@ async def diagnostic_report(payload: dict):
     return result
 
 @app.get("/sessions")
-async def sessions():
-    """List all available CSV sessions."""
+async def sessions(user: dict = Depends(get_current_user)):
+    """List available CSV sessions for the authenticated user."""
     csvs   = find_all_csvs()
     result = []
     for p in csvs[:20]:
@@ -840,13 +843,19 @@ async def sessions():
     return {"sessions": result, "total": len(csvs)}
 
 @app.get("/sessions/{filename}")
-async def session_detail(filename: str):
+async def session_detail(
+    filename: str,
+    user: dict = Depends(get_current_user),
+):
     """Full insights for a specific session by filename."""
-    return await insights(session=filename)
+    return await insights(session=filename, user=user)
 
 
 @app.post("/upload")
-async def upload_csv(file: UploadFile = File(...)):
+async def upload_csv(
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+):
     """
     Accept a CSV upload, run full trip analysis, return dashboard JSON.
     """

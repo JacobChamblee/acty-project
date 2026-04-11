@@ -8,10 +8,14 @@ version: "3.9"
 #   docker compose down -v            # stop + remove volumes
 #
 # Notes:
-#   - Ollama runs natively on 4U DIY (RTX 3060, 192.168.68.138) — not in Docker
-#   - RAG server also runs natively on 4U via systemd (acty-rag.service)
-#   - Expo mobile app runs natively on phone/emulator — not in Docker
+#   - Ollama runs natively on 4U DIY (192.168.68.138) — not in Docker
+#   - RAG server runs natively on 4U via systemd (acty-rag.service)
+#   - MCP server runs natively on 4U via systemd (acty-mcp.service)
+#   - PostgreSQL runs on the 2U DIY server (192.168.68.117) — NOT in Docker on 4U
+#     The postgres service below is kept for local dev only. On 4U, set DATABASE_URL
+#     in .env to point to the 2U server and do NOT start the postgres service.
 #   - Copy .env.example → .env and fill in secrets before first run
+#   - App URL: cactus-app.io (Cloudflare Pages) — NOT acty-labs.com
 
 services:
 
@@ -32,8 +36,9 @@ services:
       - OLLAMA_FAST_MODEL=${OLLAMA_FAST_MODEL:-phi4-mini}
       # RAG server (4U DIY)
       - RAG_BASE_URL=${RAG_BASE_URL:-http://192.168.68.138:8766}
-      # Database
-      - DATABASE_URL=postgresql://acty:acty@postgres:5432/acty-postgres
+      # Database — set DATABASE_URL in .env to point to 2U server (192.168.68.117)
+      # Local dev fallback uses the postgres service below.
+      - DATABASE_URL=${DATABASE_URL:-postgresql://acty:acty@postgres:5432/acty-postgres}
       # OBD data
       - ACTY_HOST=0.0.0.0
       - ACTY_PORT=8765

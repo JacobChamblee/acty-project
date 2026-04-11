@@ -11,6 +11,8 @@ scikit-learn
 xgboost
 python-multipart
 httpx
+passlib[bcrypt]
+python-jose[cryptography]
 
 # BYOK multi-provider LLM SDKs
 anthropic>=0.40.0

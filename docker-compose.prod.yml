@@ -1,66 +1,74 @@
-# Production Docker Compose for CM3588 Server
-# This file is for the CM3588 server (192.168.68.121)
-# It includes the web service for static file serving
+# Production Docker Compose — 4U DIY server (192.168.68.138)
+#
+# Architecture:
+#   - FastAPI (acty-api) runs here on port 8765
+#   - Ollama runs natively on this host (NOT in Docker)
+#   - RAG server runs natively on this host (systemd: acty-rag.service)
+#   - MCP server runs natively on this host (systemd: acty-mcp.service)
+#   - PostgreSQL lives on the 2U server (192.168.68.117) — DATABASE_URL points there
+#   - Caddy reverse proxy runs on CM3588 (192.168.68.121)
+#   - App: cactus-app.io (Cloudflare Pages) — NOT acty-labs.com
 
-version: '3.8'
+version: '3.9'
 
 services:
-  # Web service - Caddy for static file serving
-  # Note: Caddy runs as a system service on CM3588, not in Docker
-  # This service is for reference only - actual deployment uses system Caddy
 
-  # API service - FastAPI backend
+  # ── FastAPI backend ──────────────────────────────────────────────────────────
   api:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: acty-api
     ports:
       - "8765:8765"
     environment:
-      - DATABASE_URL=postgresql://acty_user:acty_password@postgres:5432/acty_db
-      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      # Database — 2U DIY server (postgres does NOT run on 4U in production)
+      - DATABASE_URL=${DATABASE_URL}
+      # Inference — Ollama runs natively on this host
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://192.168.68.138:11434}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://192.168.68.138:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-deepseek-r1:14b}
+      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      - OLLAMA_FAST_MODEL=${OLLAMA_FAST_MODEL:-phi4-mini}
+      # RAG server (native on this host)
+      - RAG_BASE_URL=${RAG_BASE_URL:-http://192.168.68.138:8766}
+      # Storage
+      - ACTY_HOST=0.0.0.0
+      - ACTY_PORT=8765
+      - ACTY_CSV_DIR=/data
+      - ACTY_MODEL_DIR=/models
+      - ACTY_SESSION_STORE=${ACTY_SESSION_STORE:-/mnt/truenas/share1/sessions}
+      - ACTY_REPORT_STORE=${ACTY_REPORT_STORE:-/mnt/truenas/share1/reports}
+      # Auth & security
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - CACTUS_KEY_ENCRYPTION_KEY=${CACTUS_KEY_ENCRYPTION_KEY}
+      # Privacy
+      - DP_EPSILON=${DP_EPSILON:-1.0}
+      - ZK_TOKEN_SEED=${ZK_TOKEN_SEED}
+      # Provider fallback
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ENVIRONMENT=production
-      - CORS_ORIGINS=https://acty-labs.com,https://www.acty-labs.com
-    depends_on:
-      - postgres
     volumes:
-      - ./data:/app/data
-      - ./backend:/app
+      - ./data:/data
+      - model_cache:/models
+      - /mnt/truenas/share1:/mnt/truenas/share1
+    restart: unless-stopped
     networks:
       - acty-net
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 20s
 
-  # PostgreSQL database
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_DB=acty_db
-      - POSTGRES_USER=acty_user
-      - POSTGRES_PASSWORD=acty_password
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts:/docker-entrypoint-initdb.d
-    ports:
-      - "5432:5432"
-    networks:
-      - acty-net
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U acty_user -d acty_db"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Grafana for monitoring
+  # ── Grafana monitoring ───────────────────────────────────────────────────────
   grafana:
     image: grafana/grafana:10.2.0
+    container_name: acty-grafana
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-changeme}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana
@@ -71,24 +79,9 @@ services:
       - acty-net
     restart: unless-stopped
 
-  # pgAdmin for database management
-  pgadmin:
-    image: dpage/pgadmin4:7.8
-    environment:
-      - PGADMIN_DEFAULT_EMAIL=admin@acty-labs.com
-      - PGADMIN_DEFAULT_PASSWORD=admin
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    ports:
-      - "5050:80"
-    networks:
-      - acty-net
-    restart: unless-stopped
-
 volumes:
-  postgres_data:
+  model_cache:
   grafana_data:
-  pgadmin_data:
 
 networks:
   acty-net:
