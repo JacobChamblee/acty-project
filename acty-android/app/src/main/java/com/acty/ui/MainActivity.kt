@@ -50,7 +50,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.acty.data.AuthManager
 import com.acty.ui.navigation.ActyNavHost
 import com.acty.ui.navigation.Screen
 import com.acty.ui.theme.*

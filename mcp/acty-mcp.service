@@ -1,0 +1,26 @@
+[Unit]
+Description=Acty MCP Server (SSE transport, port 8767)
+Documentation=https://github.com/JacobChamblee/acty-project
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=jacob
+WorkingDirectory=/home/jacob/acty-project/mcp
+ExecStart=/home/jacob/acty-project/mcp/venv/bin/python acty_mcp_server.py
+Restart=on-failure
+RestartSec=5
+
+# Environment — loaded from .env.mcp by the server itself via dotenv
+Environment=MCP_TRANSPORT=sse
+Environment=MCP_HOST=0.0.0.0
+Environment=MCP_PORT=8767
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=acty-mcp
+
+[Install]
+WantedBy=multi-user.target

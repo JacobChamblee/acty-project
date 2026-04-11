@@ -2,9 +2,13 @@
 Acty/Cactus MCP Server
 ======================
 Exposes Acty platform capabilities as MCP tools for use with:
-  - Claude Code (ThinkPad X280, local dev)
+  - Claude Code (Windows dev machine, connects via SSE)
   - @ElPainBot (CM3588, always-on Telegram assistant)
-  - claude.ai custom connector (SSE mode, future)
+  - claude.ai custom connector (SSE mode)
+
+Transport:
+  - SSE  (default when MCP_TRANSPORT=sse): runs HTTP server on 0.0.0.0:MCP_PORT
+  - stdio (MCP_TRANSPORT=stdio): for direct local invocation
 
 Infrastructure:
   - 4U DIY server (inference + acty-api): 192.168.68.138
@@ -18,6 +22,7 @@ Infrastructure:
 """
 
 import asyncio
+import csv
 import os
 import json
 import statistics
@@ -27,18 +32,31 @@ from typing import Optional
 
 import asyncpg
 import httpx
+from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
 # ---------------------------------------------------------------------------
-# Config — override with environment variables in production
+# Load .env.mcp from the same directory as this file (4U server config)
 # ---------------------------------------------------------------------------
 
-DB_DSN      = os.getenv("ACTY_DB_DSN",      "postgresql://acty:acty@192.168.68.138:5432/acty")
+_env_file = Path(__file__).parent / ".env.mcp"
+if _env_file.exists():
+    load_dotenv(_env_file, override=False)
+
+# ---------------------------------------------------------------------------
+# Config — override with environment variables
+# ---------------------------------------------------------------------------
+
+DB_DSN      = os.getenv("ACTY_DB_DSN",      "postgresql://acty:acty_secure_dev_password_2026@localhost:5432/acty-postgres")
 API_BASE    = os.getenv("ACTY_API_BASE",     "http://192.168.68.138:8765")
 RAG_BASE    = os.getenv("ACTY_RAG_BASE",     "http://192.168.68.138:8766")
 OLLAMA_BASE = os.getenv("ACTY_OLLAMA_BASE",  "http://192.168.68.138:11434")
 VERIFY_BASE = os.getenv("ACTY_VERIFY_BASE",  "https://verify.acty-labs.com")
-TRUENAS_CSV = os.getenv("ACTY_TRUENAS_PATH", "//192.168.68.125/share1")
+TRUENAS_MNT = os.getenv("ACTY_TRUENAS_MOUNT", "/mnt/truenas/share1")
+
+MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "sse")
+MCP_HOST      = os.getenv("MCP_HOST", "0.0.0.0")
+MCP_PORT      = int(os.getenv("MCP_PORT", "8767"))
 
 # ---------------------------------------------------------------------------
 # MCP server instance
@@ -51,12 +69,15 @@ mcp = FastMCP(
         "Use these tools to query OBD session data, run diagnostics, "
         "generate reports, and verify tamper-evident session records. "
         "Always interpret fuel trim, voltage, and timing data in context of "
-        "the vehicle's session history and known baselines."
+        "the vehicle's session history and known baselines. "
+        "Known baselines: GR86 has persistent lean LTFT (-6.5% to -8.2%) — "
+        "do not flag as new anomaly unless it worsens past -8.5%. "
+        "Tacoma alternator is failing — avg 12.87V, expected <13.5V."
     ),
 )
 
 # ---------------------------------------------------------------------------
-# DB helper
+# DB helper — creates a fresh connection per call (no pool needed for MCP)
 # ---------------------------------------------------------------------------
 
 async def _db_fetch(query: str, *args) -> list[dict]:
@@ -66,6 +87,12 @@ async def _db_fetch(query: str, *args) -> list[dict]:
         return [dict(r) for r in rows]
     finally:
         await conn.close()
+
+
+def _iso(val) -> Optional[str]:
+    if val is None:
+        return None
+    return val.isoformat() if isinstance(val, datetime) else str(val)
 
 
 # ===========================================================================
@@ -80,8 +107,6 @@ async def list_sessions(vehicle_id: str, limit: int = 10) -> list[dict]:
     Args:
         vehicle_id: Vehicle identifier (e.g. 'gr86', 'rav4', 'tacoma')
         limit:      Max sessions to return (default 10)
-
-    Returns list of sessions with id, start_time, end_time, row_count.
     """
     rows = await _db_fetch(
         """
@@ -96,11 +121,20 @@ async def list_sessions(vehicle_id: str, limit: int = 10) -> list[dict]:
         """,
         vehicle_id, limit,
     )
-    # Serialize datetimes
     for r in rows:
-        for k in ("started_at", "ended_at"):
-            if r.get(k) and isinstance(r[k], datetime):
-                r[k] = r[k].isoformat()
+        r["started_at"] = _iso(r.get("started_at"))
+        r["ended_at"]   = _iso(r.get("ended_at"))
+    return rows
+
+
+@mcp.tool()
+async def list_vehicles() -> list[dict]:
+    """List all vehicles registered in the Acty platform."""
+    rows = await _db_fetch(
+        "SELECT id, make, model, year, vin, created_at FROM vehicles ORDER BY created_at DESC"
+    )
+    for r in rows:
+        r["created_at"] = _iso(r.get("created_at"))
     return rows
 
 
@@ -110,11 +144,11 @@ async def get_session_summary(session_id: str) -> dict:
     Compute a diagnostic summary for a single Acty session.
 
     Covers:
-      - Fuel trims: avg/min/max STFT and LTFT (normal: STFT ±5%, LTFT ±7.5%)
-      - Charging: avg/min voltage (normal: 13.8–14.5V)
-      - Timing: avg advance, min (most retarded) event, retard cluster count
+      - Fuel trims: avg/min/max STFT and LTFT (normal ±5%, action ±7.5%)
+      - Charging: avg/min voltage (normal 13.8–14.5V)
+      - Timing: avg advance, retard cluster count (< 0° events)
       - Thermal: warmup duration to 80°C coolant, max coolant temp
-      - Session metadata: duration, row count, vehicle_id
+      - Engine: RPM, load, MAF, speed stats
 
     Args:
         session_id: UUID of the session to summarize
@@ -132,15 +166,12 @@ async def get_session_summary(session_id: str) -> dict:
     if not rows:
         return {"error": f"No rows found for session {session_id}"}
 
-    # Bucket by PID
     pids: dict[str, list[float]] = {}
     for r in rows:
-        pid = r["pid"]
         try:
-            val = float(r["value"])
+            pids.setdefault(r["pid"], []).append(float(r["value"]))
         except (TypeError, ValueError):
             continue
-        pids.setdefault(pid, []).append(val)
 
     def _stats(pid_name: str) -> Optional[dict]:
         vals = pids.get(pid_name)
@@ -153,13 +184,10 @@ async def get_session_summary(session_id: str) -> dict:
             "count": len(vals),
         }
 
-    # Timing retard clusters: consecutive warm-idle events < 0° advance
-    timing_vals = pids.get("TIMING_ADVANCE", [])
-    coolant_vals = pids.get("COOLANT_TEMP", [])
-    warm_temp = 80.0
+    # Timing retard clusters — consecutive runs of advance < 0°
     retard_clusters = 0
     in_retard = False
-    for v in timing_vals:
+    for v in pids.get("TIMING_ADVANCE", []):
         if v < 0:
             if not in_retard:
                 retard_clusters += 1
@@ -167,12 +195,12 @@ async def get_session_summary(session_id: str) -> dict:
         else:
             in_retard = False
 
-    # Warmup duration: rows until coolant first hits 80°C
+    # Warmup: index of first row where COOLANT_TEMP >= 80°C
     warmup_rows = None
     for i, r in enumerate(rows):
         if r["pid"] == "COOLANT_TEMP":
             try:
-                if float(r["value"]) >= warm_temp:
+                if float(r["value"]) >= 80.0:
                     warmup_rows = i
                     break
             except (TypeError, ValueError):
@@ -180,10 +208,11 @@ async def get_session_summary(session_id: str) -> dict:
 
     start = rows[0]["recorded_at"]
     end   = rows[-1]["recorded_at"]
-    if isinstance(start, datetime) and isinstance(end, datetime):
-        duration_s = int((end - start).total_seconds())
-    else:
-        duration_s = None
+    duration_s = (
+        int((end - start).total_seconds())
+        if isinstance(start, datetime) and isinstance(end, datetime)
+        else None
+    )
 
     return {
         "session_id":       session_id,
@@ -201,14 +230,14 @@ async def get_session_summary(session_id: str) -> dict:
             "retard_clusters": retard_clusters,
         },
         "thermal": {
-            "coolant_temp":  _stats("COOLANT_TEMP"),
+            "coolant_temp":       _stats("COOLANT_TEMP"),
             "warmup_rows_to_80c": warmup_rows,
         },
         "engine": {
-            "rpm":    _stats("RPM"),
-            "load":   _stats("ENGINE_LOAD"),
-            "maf":    _stats("MAF"),
-            "speed":  _stats("SPEED"),
+            "rpm":   _stats("RPM"),
+            "load":  _stats("ENGINE_LOAD"),
+            "maf":   _stats("MAF"),
+            "speed": _stats("SPEED"),
         },
     }
 
@@ -217,13 +246,10 @@ async def get_session_summary(session_id: str) -> dict:
 async def get_session_pids(session_id: str, pids: list[str]) -> dict[str, list]:
     """
     Return raw time-series values for specific PIDs in a session.
-    Useful for plotting or detailed analysis of a subset of channels.
 
     Args:
         session_id: UUID of the session
         pids:       List of PID names, e.g. ["LONG_FUEL_TRIM_1", "COOLANT_TEMP"]
-
-    Returns dict of {pid: [{recorded_at, value}, ...]}
     """
     placeholders = ", ".join(f"${i+2}" for i in range(len(pids)))
     rows = await _db_fetch(
@@ -237,9 +263,8 @@ async def get_session_pids(session_id: str, pids: list[str]) -> dict[str, list]:
     )
     result: dict[str, list] = {p: [] for p in pids}
     for r in rows:
-        ts = r["recorded_at"]
         result[r["pid"]].append({
-            "t": ts.isoformat() if isinstance(ts, datetime) else str(ts),
+            "t": _iso(r["recorded_at"]),
             "v": r["value"],
         })
     return result
@@ -248,13 +273,12 @@ async def get_session_pids(session_id: str, pids: list[str]) -> dict[str, list]:
 @mcp.tool()
 async def get_vehicle_history(vehicle_id: str, sessions: int = 20) -> dict:
     """
-    Cross-session trend analysis for a vehicle.
-    Returns per-session LTFT avg, voltage avg, and peak timing retard
-    to identify longitudinal patterns (e.g. worsening lean condition).
+    Cross-session trend analysis: LTFT avg, voltage avg, and peak timing
+    retard per session — shows longitudinal patterns like worsening lean drift.
 
     Args:
         vehicle_id: Vehicle identifier
-        sessions:   Number of recent sessions to include (default 20)
+        sessions:   Number of recent sessions (default 20)
     """
     rows = await _db_fetch(
         """
@@ -268,24 +292,22 @@ async def get_vehicle_history(vehicle_id: str, sessions: int = 20) -> dict:
         WHERE s.vehicle_id = $1
           AND sr.pid IN (
               'LONG_FUEL_TRIM_1', 'SHORT_FUEL_TRIM_1',
-              'CONTROL_MODULE_VOLTAGE', 'TIMING_ADVANCE',
-              'COOLANT_TEMP'
+              'CONTROL_MODULE_VOLTAGE', 'TIMING_ADVANCE', 'COOLANT_TEMP'
           )
         GROUP BY s.id, s.started_at, sr.pid
         ORDER BY s.started_at DESC
         LIMIT $2
         """,
-        vehicle_id, sessions * 5,  # 5 PIDs × N sessions
+        vehicle_id, sessions * 5,
     )
 
-    # Pivot into per-session dict
     sessions_map: dict = {}
     for r in rows:
         sid = r["session_id"]
         if sid not in sessions_map:
             sessions_map[sid] = {
                 "session_id": sid,
-                "started_at": r["started_at"].isoformat() if isinstance(r["started_at"], datetime) else str(r["started_at"]),
+                "started_at": _iso(r["started_at"]),
             }
         sessions_map[sid][r["pid"]] = {
             "avg": round(r["avg_val"], 2) if r["avg_val"] is not None else None,
@@ -294,23 +316,39 @@ async def get_vehicle_history(vehicle_id: str, sessions: int = 20) -> dict:
 
     return {
         "vehicle_id": vehicle_id,
-        "sessions":   list(sessions_map.values()),
-        "baseline_notes": {
-            "LTFT_normal":    "±7.5% (action), ±10% (concern)",
-            "voltage_normal": "13.8–14.5V under load",
-            "timing_note":    "Warm-idle retard < 0° warrants investigation",
+        "sessions": list(sessions_map.values()),
+        "thresholds": {
+            "LTFT_warning":  "±7.5%",
+            "LTFT_action":   "±10%",
+            "voltage_normal":"13.8–14.5V",
+            "timing_note":   "Warm-idle retard < 0° warrants investigation",
         },
     }
 
 
 @mcp.tool()
-async def list_vehicles() -> list[dict]:
+async def get_dtc_history(vehicle_id: str) -> list[dict]:
     """
-    List all vehicles registered in the Acty platform with their metadata.
+    All DTC events logged for a vehicle across all sessions.
+
+    Args:
+        vehicle_id: Vehicle identifier
     """
-    return await _db_fetch(
-        "SELECT id, make, model, year, vin, created_at FROM vehicles ORDER BY created_at DESC"
+    rows = await _db_fetch(
+        """
+        SELECT de.id, de.session_id, de.code, de.description,
+               de.confirmed, de.recorded_at, s.started_at
+        FROM dtc_events de
+        JOIN sessions s ON s.id = de.session_id
+        WHERE s.vehicle_id = $1
+        ORDER BY de.recorded_at DESC
+        """,
+        vehicle_id,
     )
+    for r in rows:
+        r["recorded_at"] = _iso(r.get("recorded_at"))
+        r["started_at"]  = _iso(r.get("started_at"))
+    return rows
 
 
 # ===========================================================================
@@ -321,15 +359,11 @@ async def list_vehicles() -> list[dict]:
 async def query_fsm_rag(question: str, vehicle: str = "GR86") -> dict:
     """
     Query the Acty FSM RAG pipeline with a natural language diagnostic question.
-    Retrieves relevant passages from GR86/BRZ factory service manuals and
-    returns a grounded AI answer.
+    Retrieves relevant passages from GR86/BRZ factory service manuals.
 
     Args:
-        question: Natural language diagnostic question
-                  e.g. "What causes persistent lean LTFT on the FA24?"
+        question: e.g. "What causes persistent lean LTFT on the FA24?"
         vehicle:  Vehicle model for RAG context (default: GR86)
-
-    Returns answer text plus retrieved source chunks.
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.post(
@@ -343,15 +377,12 @@ async def query_fsm_rag(question: str, vehicle: str = "GR86") -> dict:
 @mcp.tool()
 async def generate_report(session_id: str, model: str = "deepseek-r1:14b") -> dict:
     """
-    Trigger Ollama LLM report generation for an Acty session.
-    Calls the acty-api /generate-report endpoint which assembles
-    session context, runs the ML pipeline, and queries Ollama.
+    Trigger LLM report generation for an Acty session via acty-api.
+    Assembles session context, runs ML pipeline, queries Ollama.
 
     Args:
-        session_id: UUID of the session to report on
-        model:      Ollama model to use (default: deepseek-r1:14b)
-
-    Returns the generated narrative report text and any flagged anomalies.
+        session_id: UUID of the session
+        model:      Ollama model (default: deepseek-r1:14b)
     """
     async with httpx.AsyncClient(timeout=120.0) as client:
         r = await client.post(
@@ -365,13 +396,11 @@ async def generate_report(session_id: str, model: str = "deepseek-r1:14b") -> di
 @mcp.tool()
 async def run_anomaly_check(session_id: str) -> dict:
     """
-    Trigger the Isolation Forest anomaly detection pass on a session
-    via the acty-api /analyze endpoint.
-
+    Run Isolation Forest anomaly detection on a session via acty-api.
     Returns list of anomalous rows with timestamps and flagged PIDs.
 
     Args:
-        session_id: UUID of the session to analyze
+        session_id: UUID of the session
     """
     async with httpx.AsyncClient(timeout=60.0) as client:
         r = await client.post(
@@ -385,12 +414,12 @@ async def run_anomaly_check(session_id: str) -> dict:
 @mcp.tool()
 async def ask_ollama(prompt: str, model: str = "llama3.1:8b") -> str:
     """
-    Send a raw prompt directly to the local Ollama instance.
-    Useful for quick diagnostic reasoning without full report pipeline.
+    Send a raw prompt to the local Ollama instance.
+    Use llama3.1:8b for speed, deepseek-r1:14b for depth.
 
     Args:
         prompt: The prompt to send
-        model:  Ollama model (default: llama3.1:8b for speed; use deepseek-r1:14b for depth)
+        model:  Ollama model name
     """
     async with httpx.AsyncClient(timeout=60.0) as client:
         r = await client.post(
@@ -401,6 +430,15 @@ async def ask_ollama(prompt: str, model: str = "llama3.1:8b") -> str:
         return r.json().get("response", "")
 
 
+@mcp.tool()
+async def list_ollama_models() -> list[dict]:
+    """List all models available on the local Ollama instance."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(f"{OLLAMA_BASE}/api/tags")
+        r.raise_for_status()
+        return r.json().get("models", [])
+
+
 # ===========================================================================
 # TOOLS — Verification & Integrity
 # ===========================================================================
@@ -408,14 +446,12 @@ async def ask_ollama(prompt: str, model: str = "llama3.1:8b") -> str:
 @mcp.tool()
 async def verify_session(session_id: str) -> dict:
     """
-    Run the 7-layer independent verification of an Acty session record.
-    Checks hash-chain integrity, Ed25519 signature, RFC 3161 timestamp
-    anchor, and server-side audit log consistency.
+    Run independent 7-layer verification of an Acty session record.
+    Checks hash-chain integrity, Ed25519 signature, RFC 3161 timestamp,
+    and server-side audit log consistency.
 
     Args:
-        session_id: UUID of the session to verify
-
-    Returns verification result with pass/fail per layer.
+        session_id: UUID of the session
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.get(f"{VERIFY_BASE}/verify/{session_id}")
@@ -426,9 +462,7 @@ async def verify_session(session_id: str) -> dict:
 @mcp.tool()
 async def get_session_manifest(session_id: str) -> dict:
     """
-    Retrieve the signed session manifest for a completed session.
-    Includes Merkle root of all record hashes, Ed25519 signature,
-    and RFC 3161 timestamp token.
+    Retrieve the signed session manifest (Merkle root, Ed25519 sig, TSA token).
 
     Args:
         session_id: UUID of the session
@@ -445,8 +479,7 @@ async def get_session_manifest(session_id: str) -> dict:
     if not rows:
         return {"error": f"No manifest found for session {session_id}"}
     r = rows[0]
-    if isinstance(r.get("created_at"), datetime):
-        r["created_at"] = r["created_at"].isoformat()
+    r["created_at"] = _iso(r.get("created_at"))
     return r
 
 
@@ -458,42 +491,39 @@ async def get_session_manifest(session_id: str) -> dict:
 async def list_csv_archive(vehicle_id: Optional[str] = None) -> list[str]:
     """
     List raw session CSV files on TrueNAS share1 (192.168.68.125).
-    Files are organized as: share1/<vehicle_id>/<session_id>.csv
+    Organized as: share1/<vehicle_id>/<session_id>.csv
 
     Args:
         vehicle_id: Filter to a specific vehicle folder (optional)
 
-    Returns list of relative file paths.
-    Note: Requires the MCP server to have the TrueNAS share mounted locally.
+    Note: Requires TrueNAS share mounted at ACTY_TRUENAS_MOUNT on the 4U server.
     """
-    mount = Path(os.getenv("ACTY_TRUENAS_MOUNT", "/mnt/truenas/share1"))
+    mount = Path(TRUENAS_MNT)
     if not mount.exists():
-        return [f"TrueNAS share not mounted at {mount}. Mount with: "
-                f"mount -t cifs //192.168.68.125/share1 {mount} -o username=...,password=..."]
-
+        return [
+            f"TrueNAS share not mounted at {mount}. "
+            f"Mount with: mount -t cifs //192.168.68.125/share1 {mount} "
+            f"-o username=...,password=...,vers=3.0"
+        ]
     search_root = mount / vehicle_id if vehicle_id else mount
-    files = sorted(search_root.rglob("*.csv"))
-    return [str(f.relative_to(mount)) for f in files]
+    return [str(f.relative_to(mount)) for f in sorted(search_root.rglob("*.csv"))]
 
 
 @mcp.tool()
 async def read_csv_head(relative_path: str, rows: int = 5) -> dict:
     """
     Read the first N rows of a raw session CSV from TrueNAS share1.
-    Useful for inspecting capture format or debugging ingestion issues.
 
     Args:
-        relative_path: Path relative to share1 root, e.g. 'gr86/session_abc123.csv'
+        relative_path: Path relative to share1, e.g. 'gr86/session_abc123.csv'
         rows:          Number of rows to return (default 5)
     """
-    import csv
-
-    mount = Path(os.getenv("ACTY_TRUENAS_MOUNT", "/mnt/truenas/share1"))
+    mount = Path(TRUENAS_MNT)
     full_path = mount / relative_path
 
     if not full_path.exists():
         return {"error": f"File not found: {full_path}"}
-    if not full_path.suffix == ".csv":
+    if full_path.suffix != ".csv":
         return {"error": "Only .csv files supported"}
 
     result = []
@@ -514,26 +544,21 @@ async def read_csv_head(relative_path: str, rows: int = 5) -> dict:
 @mcp.tool()
 async def platform_health() -> dict:
     """
-    Check the health of all Acty/Cactus platform services:
-      - PostgreSQL connectivity
-      - acty-api (/health)
-      - RAG server (/health)
-      - Ollama (/api/tags)
-      - TrueNAS share mount
-
+    Check health of all Acty/Cactus platform services:
+    PostgreSQL, acty-api, RAG server, Ollama, TrueNAS mount.
     Returns per-service status with latency.
     """
-    results = {}
+    results: dict = {}
 
     # PostgreSQL
     try:
-        start = asyncio.get_event_loop().time()
+        t0 = asyncio.get_event_loop().time()
         conn = await asyncpg.connect(DB_DSN)
         await conn.fetchval("SELECT 1")
         await conn.close()
         results["postgresql"] = {
-            "status": "ok",
-            "latency_ms": round((asyncio.get_event_loop().time() - start) * 1000, 1),
+            "status":     "ok",
+            "latency_ms": round((asyncio.get_event_loop().time() - t0) * 1000, 1),
         }
     except Exception as e:
         results["postgresql"] = {"status": "error", "error": str(e)}
@@ -543,25 +568,26 @@ async def platform_health() -> dict:
         "acty_api":   f"{API_BASE}/health",
         "rag_server": f"{RAG_BASE}/health",
         "ollama":     f"{OLLAMA_BASE}/api/tags",
+        "grafana":    "http://192.168.68.138:3000/api/health",
     }
     async with httpx.AsyncClient(timeout=5.0) as client:
         for name, url in endpoints.items():
             try:
-                start = asyncio.get_event_loop().time()
-                r = await client.get(url)
+                t0 = asyncio.get_event_loop().time()
+                resp = await client.get(url)
                 results[name] = {
-                    "status": "ok" if r.status_code < 400 else "degraded",
-                    "http_status": r.status_code,
-                    "latency_ms": round((asyncio.get_event_loop().time() - start) * 1000, 1),
+                    "status":      "ok" if resp.status_code < 400 else "degraded",
+                    "http_status": resp.status_code,
+                    "latency_ms":  round((asyncio.get_event_loop().time() - t0) * 1000, 1),
                 }
             except Exception as e:
                 results[name] = {"status": "error", "error": str(e)}
 
     # TrueNAS mount
-    mount = Path(os.getenv("ACTY_TRUENAS_MOUNT", "/mnt/truenas/share1"))
+    mount = Path(TRUENAS_MNT)
     results["truenas_mount"] = {
-        "status": "ok" if mount.exists() else "not_mounted",
-        "path": str(mount),
+        "status":     "ok" if mount.exists() else "not_mounted",
+        "path":       TRUENAS_MNT,
         "smb_target": "//192.168.68.125/share1",
     }
 
@@ -574,4 +600,8 @@ async def platform_health() -> dict:
 # ===========================================================================
 
 if __name__ == "__main__":
-    mcp.run()
+    if MCP_TRANSPORT == "sse":
+        print(f"[acty-mcp] Starting SSE server on {MCP_HOST}:{MCP_PORT}")
+        mcp.run(transport="sse", host=MCP_HOST, port=MCP_PORT)
+    else:
+        mcp.run()

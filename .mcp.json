@@ -9,6 +9,10 @@
       "env": {
         "CONTEXT_MODE_JSON": "true"
       }
+    },
+    "cactus": {
+      "type": "sse",
+      "url": "http://192.168.68.138:8767/sse"
     }
   }
 }

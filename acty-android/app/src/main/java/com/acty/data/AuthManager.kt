@@ -428,39 +428,54 @@ class AuthManager(private val context: Context) {
         }
         val accessToken = params["access_token"] ?: return@withContext false
 
-        // Fetch user info from Supabase
         try {
-            val request = Request.Builder()
+            // 1. Fetch profile info from Supabase (for latest avatar/name)
+            val supabaseReq = Request.Builder()
                 .url("${ActyConfig.SUPABASE_URL}/auth/v1/user")
                 .header("Authorization", "Bearer $accessToken")
                 .header("apikey", ActyConfig.SUPABASE_ANON_KEY)
                 .build()
 
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext false
-                val body = JSONObject(response.body?.string() ?: return@withContext false)
-                val email = body.optString("email", "").lowercase()
-                if (email.isEmpty()) return@withContext false
+            val bodyText = httpClient.newCall(supabaseReq).execute().use { it.body?.string() ?: "" }
+            if (bodyText.isEmpty()) return@withContext false
+            val body = JSONObject(bodyText)
+            val email = body.optString("email", "").lowercase()
+            if (email.isEmpty()) return@withContext false
 
-                val meta = body.optJSONObject("user_metadata") ?: JSONObject()
-                val fullName = meta.optString("full_name", meta.optString("name", "")).ifEmpty { email }
-                val avatarUrl = meta.optString("avatar_url", "")
+            val meta = body.optJSONObject("user_metadata") ?: JSONObject()
+            val fullName = meta.optString("full_name", meta.optString("name", "")).ifEmpty { email }
+            val avatarUrl = meta.optString("avatar_url", "")
 
-                // Merge with any existing local account (preserve vehicles / settings)
-                val existing = getAccount(email)
-                val account = (existing ?: UserAccount(
-                    username    = fullName,
-                    displayName = fullName,
-                    email       = email,
-                )).copy(
-                    displayName = fullName,
-                    provider    = "google",
-                    avatarUrl   = avatarUrl,
-                )
+            // 2. Fetch shared account data from Acty backend (vehicles, settings)
+            // This ensures the Android app is in sync with the web companion.
+            val backendReq = Request.Builder()
+                .url("${ActyConfig.API_BASE}/api/v1/auth/me")
+                .header("Authorization", "Bearer $accessToken")
+                .build()
 
-                persistAccount(account)
-                true
-            }
+            val remoteAccount = try {
+                httpClient.newCall(backendReq).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val payload = JSONObject(resp.body?.string() ?: "")
+                        payload.optJSONObject("account")?.let { remoteAccountFromJson(it) }
+                    } else null
+                }
+            } catch (_: Exception) { null }
+
+            // 3. Merge: Backend is source of truth for vehicles/settings, Supabase for profile
+            val existing = getAccount(email)
+            val account = (remoteAccount ?: existing ?: UserAccount(
+                username    = fullName,
+                displayName = fullName,
+                email       = email,
+            )).copy(
+                displayName = fullName,
+                provider    = "google",
+                avatarUrl   = avatarUrl,
+            )
+
+            persistAccount(account)
+            true
         } catch (_: Exception) { false }
     }
 
