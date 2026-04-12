@@ -5,7 +5,7 @@
 #   - Ollama runs natively on this host (NOT in Docker)
 #   - RAG server runs natively on this host (systemd: acty-rag.service)
 #   - MCP server runs natively on this host (systemd: acty-mcp.service)
-#   - PostgreSQL lives on the 2U server (192.168.68.117) — DATABASE_URL points there
+#   - PostgreSQL lives on the 2U server (192.168.68.155) — DATABASE_URL points there
 #   - Caddy reverse proxy runs on CM3588 (192.168.68.121)
 #   - App: cactus-app.io (Cloudflare Pages) — NOT acty-labs.com
 

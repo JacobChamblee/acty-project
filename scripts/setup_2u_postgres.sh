@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# setup_2u_postgres.sh — PostgreSQL 16 setup on the 2U DIY server (192.168.68.117)
+# setup_2u_postgres.sh — PostgreSQL 16 setup on the 2U DIY server (192.168.68.155)
 #
 # Run this script ON the 2U server as a user with sudo access.
 # It installs Docker, starts PostgreSQL 16 in a container, applies all
 # Acty schema migrations, and prints the DATABASE_URL to paste into .env.
 #
 # Usage:
-#   scp scripts/setup_2u_postgres.sh user@192.168.68.117:~/
-#   ssh user@192.168.68.117 'bash ~/setup_2u_postgres.sh'
+#   scp scripts/setup_2u_postgres.sh user@192.168.68.155:~/
+#   ssh user@192.168.68.155 'bash ~/setup_2u_postgres.sh'
 #
 # After this script completes, copy the DATABASE_URL into:
 #   - /home/<user>/acty-project-new/.env      (4U server)
