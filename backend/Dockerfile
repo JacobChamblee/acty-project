@@ -7,13 +7,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Python path so 'from ml.pipeline.x import y' resolves correctly
+# Build context is ./backend — requirements.txt and all source are relative to it.
+# PYTHONPATH=/app/backend so 'from api.server import ...' resolves correctly.
 ENV PYTHONPATH=/app/backend
 
+# Install Python deps first (cached layer)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY backend/ ./backend/
+# Copy entire backend source into /app/backend/
+COPY . ./backend/
 
 EXPOSE 8765
 

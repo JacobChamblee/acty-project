@@ -22,8 +22,8 @@ services:
   # ── FastAPI backend ──────────────────────────────────────────────────────────
   api:
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: acty-api
     ports:
       - "8765:8765"
