@@ -37,6 +37,12 @@ from llm.prompt_builder import build_prompt
 from llm.providers import CactusPrompt, get_provider
 
 from .llm_config import VALID_PROVIDERS, current_user_id, fetch_decrypted_key, get_db_connection, mark_key_used
+from api.pipeline_validators import (
+    sanitize_user_query,
+    filter_rag_chunks,
+    sse_encode_token,
+    PipelineValidationError,
+)
 
 router = APIRouter(prefix="/api/v1/insights", tags=["insights"])
 
@@ -303,7 +309,7 @@ async def _build_cactus_prompt(
             prev_summary = " | ".join(snippets)
 
     # --- RAG retrieval (Tier 2) — degrade gracefully if unreachable ---
-    rag_url = os.environ.get("CACTUS_RAG_URL", "http://localhost:8766")
+    rag_url = os.environ.get("RAG_BASE_URL", os.environ.get("CACTUS_RAG_URL", "http://localhost:8766"))
     fsm_refs = []
     # Build RAG query from anomaly flags + vehicle info
     rag_query = f"{vehicle['make']} {vehicle['model']} {vehicle['year']} {vehicle['engine']} " + " ".join(
@@ -312,11 +318,18 @@ async def _build_cactus_prompt(
     if not rag_query.strip():
         rag_query = f"{vehicle['make']} {vehicle['model']} diagnostic"
 
+    _rag_token = os.environ.get("RAG_INTERNAL_TOKEN", "")
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(f"{rag_url}/retrieve", json={"query": rag_query, "top_k": 5})
+            resp = await client.post(
+                f"{rag_url}/retrieve",
+                json={"query": rag_query, "top_k": 5},
+                headers={"X-Internal-Token": _rag_token} if _rag_token else {},
+            )
             if resp.status_code == 200:
-                chunks = resp.json().get("chunks", [])
+                raw_chunks = resp.json().get("chunks", [])
+                # Stage 3 — discard chunks below cosine-similarity floor
+                chunks = filter_rag_chunks(raw_chunks)
                 fsm_refs = [
                     {
                         "section": c.get("source", "?"),
@@ -379,6 +392,12 @@ async def generate_insight(
     user_id: uuid.UUID = Depends(current_user_id),
     conn: asyncpg.Connection = Depends(get_db_connection),
 ):
+    # Stage 4 — validate user query before touching DB or LLM
+    try:
+        body.user_query = sanitize_user_query(body.user_query)
+    except PipelineValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
     # Resolve provider + api_key
     provider_id = body.provider
     model_id = body.model_id or ""
@@ -493,9 +512,8 @@ async def stream_insight(job_id: str):
                 _job_meta.pop(job_id, None)
                 break
 
-            # Normal token — escape newlines within the SSE data field
-            token = str(item).replace("\n", "\\n")
-            yield f"data: {token}\n\n"
+            # Normal token — safe SSE encoding (escapes CR, LF, and control chars)
+            yield f"data: {sse_encode_token(str(item))}\n\n"
 
     return StreamingResponse(
         event_stream(),

@@ -9,10 +9,12 @@ to the Android app over local WiFi.
 """
 
 import asyncio
+import hashlib
 import io
+import json
 import os
+import re
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -23,7 +25,6 @@ import uvicorn
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from ml.pipeline.report import generate_diagnostic_report
 
 # ── config ────────────────────────────────────────────────────────────────────
 CSV_DIR      = Path(os.environ.get("ACTY_CSV_DIR", str(Path.home())))
@@ -35,9 +36,9 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 THRESHOLDS = {
     "COOLANT_TEMP":      {"warn": 100, "crit": 108,  "unit": "°C",  "label": "Coolant Temp"},
     "ENGINE_OIL_TEMP":   {"warn": 120, "crit": 135,  "unit": "°C",  "label": "Oil Temp"},
-    "LONG_FUEL_TRIM_1":  {"warn": 8.0, "crit": 12.0, "unit": "%",   "label": "Long Fuel Trim B1", "abs": True},
+    "LONG_FUEL_TRIM_1":  {"warn": 8.5, "crit": 12.0, "unit": "%",   "label": "Long Fuel Trim B1", "abs": True},
     "SHORT_FUEL_TRIM_1": {"warn": 10,  "crit": 20,   "unit": "%",   "label": "Short Fuel Trim B1", "abs": True},
-    "LONG_FUEL_TRIM_2":  {"warn": 8.0, "crit": 12.0, "unit": "%",   "label": "Long Fuel Trim B2", "abs": True},
+    "LONG_FUEL_TRIM_2":  {"warn": 8.5, "crit": 12.0, "unit": "%",   "label": "Long Fuel Trim B2", "abs": True},
     "INTAKE_TEMP":       {"warn": 50,  "crit": 65,   "unit": "°C",  "label": "Intake Air Temp"},
     "CONTROL_VOLTAGE":   {"warn": 13.8,"crit": 11.5, "unit": "V",   "label": "Battery Voltage", "low": True},
     "ENGINE_LOAD":       {"warn": 85,  "crit": 95,   "unit": "%",   "label": "Engine Load"},
@@ -58,8 +59,8 @@ async def get_db_connection() -> asyncpg.Connection:
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured")
     if _db_pool is not None:
-        return await _db_pool.acquire()
-    return await asyncpg.connect(DATABASE_URL)
+        return await _db_pool.acquire(timeout=10.0)
+    return await asyncpg.connect(DATABASE_URL, command_timeout=30)
 
 
 @asynccontextmanager
@@ -108,9 +109,8 @@ CORS_ORIGINS = [
     "https://www.cactus-app.io",
     # API domain
     "https://api.acty-labs.com",
-    # Company site (read-only pages only — NOT the app)
-    "https://acty-labs.com",
-    "https://www.acty-labs.com",
+    # acty-labs.com is the company website only — it does not make API calls.
+    # Do NOT add it here; it is not the app and must not receive CORS access.
     # Development and testing
     "http://localhost:3000",      # Frontend dev server
     "http://localhost:5173",      # Vite dev server
@@ -137,6 +137,7 @@ from api.routers.insights import router as insights_router
 from api.routers.auth import router as auth_router
 from api.routers.ollama_router import router as ollama_router
 from api.routers.sessions_router import router as sessions_router
+from api.routers.vehicles_router import router as vehicles_router
 from api.storage.truenas_writer import archive_session, archive_report, archive_csv
 
 app.include_router(llm_config_router)
@@ -144,6 +145,7 @@ app.include_router(insights_router)
 app.include_router(auth_router)
 app.include_router(ollama_router)
 app.include_router(sessions_router)
+app.include_router(vehicles_router)
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 def find_latest_csv() -> Optional[Path]:
@@ -288,7 +290,7 @@ def _generate_insights(df: pd.DataFrame, stats: dict) -> list[dict]:
 
     # 1. Long fuel trim
     if ltft is not None:
-        if abs(ltft) >= 7.5:
+        if abs(ltft) >= 8.5:
             direction = "lean" if ltft < 0 else "rich"
             cause = "an air leak, MAF drift, or fuel pressure issue" if ltft < 0 else "an injector leak or O2 sensor issue"
             insights.append({
@@ -390,7 +392,7 @@ def _generate_insights(df: pd.DataFrame, stats: dict) -> list[dict]:
             insights.append({
                 "type": "success",
                 "title": f"Charging system healthy ({min_v:.2f}V min)",
-                "body": f"Voltage stayed above 13.5V throughout the drive. Alternator is maintaining charge correctly.",
+                "body": "Voltage stayed above 13.5V throughout the drive. Alternator is maintaining charge correctly.",
             })
 
     # 6. Standstill %
@@ -525,7 +527,7 @@ def _compute_trip_report(df: pd.DataFrame, filename: str) -> dict:
 
     def _ltft_status(v):
         if v is None: return "Unknown"
-        return "Critical" if abs(v) >= 12 else "Watch" if abs(v) >= 7.5 else "Normal"
+        return "Critical" if abs(v) >= 12 else "Watch" if abs(v) >= 8.5 else "Normal"
 
     # --- electrical ---
     avg_v = round(float(df["CONTROL_VOLTAGE"].dropna().mean()), 2) if "CONTROL_VOLTAGE" in df.columns and df["CONTROL_VOLTAGE"].notna().any() else None
@@ -645,27 +647,56 @@ def _health_score(alerts: list[dict]) -> int:
     return max(0, score)
 
 # ── database persistence ──────────────────────────────────────────────────────
+_SESSION_ROWS_INSERT = """
+    INSERT INTO session_rows
+        (session_id, timestamp, elapsed_s, pid_values, record_hash, prev_hash, seq)
+    VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
+"""
+
 async def _persist_session(
     summary: dict,
     alerts: list[dict],
     health_score: int,
+    user_id=None,
+    vehicle_id: str = "default",
+    df: "pd.DataFrame | None" = None,
+    anomaly_result=None,
 ) -> None:
-    """Upsert session + alerts into PostgreSQL. Silently skips if DB unavailable."""
+    """
+    Upsert session + alerts into PostgreSQL. Silently skips if DB unavailable.
+
+    Args:
+        user_id:    Internal users.id (UUID). When provided, the vehicle row is
+                    linked via owner_id so sessions are visible to this user only.
+        vehicle_id: Pseudonymous vehicle token — defaults to 'default' for legacy
+                    CSV uploads that have no vehicle context.
+    """
     if not DATABASE_URL:
         return
     conn = None
     try:
         conn = await get_db_connection()
 
-        # Ensure default vehicle row exists
-        await conn.execute(
-            """
-            INSERT INTO vehicles (vehicle_id, make, model, year, engine)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (vehicle_id) DO NOTHING
-            """,
-            "default", "Toyota", "GR86", 2023, "FA24",
-        )
+        # Ensure vehicle row exists; set owner_id when we have an authenticated user
+        if user_id:
+            await conn.execute(
+                """
+                INSERT INTO vehicles (vehicle_id, make, model, year, engine, owner_id)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (vehicle_id) DO UPDATE
+                    SET owner_id = COALESCE(vehicles.owner_id, EXCLUDED.owner_id)
+                """,
+                vehicle_id, "Toyota", "GR86", 2023, "FA24", user_id,
+            )
+        else:
+            await conn.execute(
+                """
+                INSERT INTO vehicles (vehicle_id, make, model, year, engine)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (vehicle_id) DO NOTHING
+                """,
+                vehicle_id, "Toyota", "GR86", 2023, "FA24",
+            )
 
         # Check if session already persisted
         existing_id = await conn.fetchval(
@@ -689,7 +720,7 @@ async def _persist_session(
                     $11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
                 ) RETURNING id
                 """,
-                "default",
+                vehicle_id,
                 summary["filename"],
                 summary["session_date"],
                 summary["session_time"],
@@ -738,13 +769,90 @@ async def _persist_session(
                 """,
                 [
                     (
-                        session_id, "default",
+                        session_id, vehicle_id,
                         a["pid"], a["label"], a["severity"],
                         a["value"], a["unit"], a["message"],
                     )
                     for a in alerts
                 ],
             )
+
+        # ── Persist ML anomaly result ─────────────────────────────────────────
+        if session_id and anomaly_result is not None:
+            existing_anomaly = await conn.fetchval(
+                "SELECT COUNT(*) FROM anomaly_results WHERE session_id = $1 AND method = $2",
+                session_id, anomaly_result.method,
+            )
+            if existing_anomaly == 0:
+                await conn.execute(
+                    """
+                    INSERT INTO anomaly_results
+                        (session_id, vehicle_id, method, anomaly_score,
+                         is_anomaly, flagged_pids, details)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    """,
+                    session_id,
+                    vehicle_id,
+                    anomaly_result.method,
+                    anomaly_result.anomaly_score,
+                    anomaly_result.is_anomaly,
+                    anomaly_result.flagged_pids,     # asyncpg: Python list → TEXT[]
+                    json.dumps(anomaly_result.details),
+                )
+
+        # ── Persist per-row time-series (hash-chain, batched 500 rows) ────────
+        if session_id and df is not None and not df.empty:
+            existing_rows = await conn.fetchval(
+                "SELECT COUNT(*) FROM session_rows WHERE session_id = $1",
+                session_id,
+            )
+            if existing_rows == 0:
+                pid_cols = [
+                    c for c in df.columns
+                    if c not in {"timestamp", "elapsed_s", "vin",
+                                 "dtc_confirmed", "dtc_pending"}
+                ]
+                batch: list = []
+                # Anchor the chain root to this session so row 0 cannot be forged
+                # without knowledge of the session_id and the first row's timestamp.
+                _first_ts = df.iloc[0]["timestamp"]
+                _sentinel_str = f"START|{session_id}|{_first_ts}"
+                prev_hash: "str | None" = hashlib.sha256(_sentinel_str.encode()).hexdigest()
+                for seq, row in enumerate(df.itertuples(index=False)):
+                    row_dict = row._asdict()
+                    pid_values = {
+                        c: (float(row_dict[c])
+                            if isinstance(row_dict[c], (np.floating, np.integer))
+                            else row_dict[c])
+                        for c in pid_cols
+                        if c in row_dict and not (
+                            isinstance(row_dict[c], float) and np.isnan(row_dict[c])
+                        ) and row_dict[c] is not None
+                    }
+                    ts_raw  = row_dict.get("timestamp")
+                    ts_dt   = ts_raw.to_pydatetime() if hasattr(ts_raw, "to_pydatetime") else None
+                    el_raw  = row_dict.get("elapsed_s")
+                    elapsed = (float(el_raw)
+                               if el_raw is not None and not (
+                                   isinstance(el_raw, float) and np.isnan(el_raw))
+                               else None)
+                    raw_str     = f"{session_id}|{seq}|{ts_dt}|{json.dumps(pid_values, sort_keys=True)}|{prev_hash or ''}"
+                    record_hash = hashlib.sha256(raw_str.encode()).hexdigest()
+
+                    batch.append((
+                        session_id, ts_dt, elapsed,
+                        json.dumps(pid_values),
+                        record_hash, prev_hash, seq,
+                    ))
+                    prev_hash = record_hash
+
+                    if len(batch) >= 500:
+                        await conn.executemany(_SESSION_ROWS_INSERT, batch)
+                        batch.clear()
+
+                if batch:
+                    await conn.executemany(_SESSION_ROWS_INSERT, batch)
+
     except Exception as e:
         print(f"[db] persist_session failed: {e}")
     finally:
@@ -790,6 +898,33 @@ async def insights(
       - sparkline data for key PIDs (last 60 samples)
     """
     if session:
+        # Ownership check: verify this session belongs to the requesting user.
+        # Uses the same logic as session_detail so there is no bypass via this route.
+        user_id = user.get("id")
+        if user_id and DATABASE_URL:
+            try:
+                conn = await get_db_connection()
+                try:
+                    owned = await conn.fetchval(
+                        """
+                        SELECT s.filename
+                        FROM sessions s
+                        JOIN vehicles v ON v.vehicle_id = s.vehicle_id
+                        WHERE s.filename = $1 AND v.owner_id = $2
+                        """,
+                        session,
+                        user_id,
+                    )
+                finally:
+                    await conn.close()
+                if owned is None:
+                    raise HTTPException(404, f"Session not found: {session!r}")
+            except HTTPException:
+                raise
+            except Exception as exc:
+                # DB unavailable — refuse rather than serve unverified data.
+                raise HTTPException(503, f"Ownership check unavailable: {exc}")
+
         path = CSV_DIR / session
         if not path.exists():
             raise HTTPException(404, f"Session not found: {session}")
@@ -814,7 +949,17 @@ async def insights(
             sparklines[pid] = vals
 
     # Persist to DB (fire-and-forget; never blocks the response)
-    asyncio.create_task(_persist_session(summary, alerts, score))
+    try:
+        from ml.pipeline.anomaly import run_isolation_forest as _run_if
+        _anomaly_result = _run_if(df)
+    except Exception:
+        _anomaly_result = None
+    asyncio.create_task(_persist_session(
+        summary, alerts, score,
+        user_id=user.get("id"),
+        df=df,
+        anomaly_result=_anomaly_result,
+    ))
 
     return {
         "summary":      summary,
@@ -833,7 +978,13 @@ async def diagnostic_report(
     """
     Generate a RAG-grounded diagnostic report.
     Expects: { dtc_codes, anomalies, vehicle_data, vehicle_id }
+
+    anomalies entries should be pre-analysed dicts with keys:
+      label, severity, message — NOT raw PID values.
+    vehicle_data is sanitized server-side to identity fields only.
     """
+    from ml.pipeline.report import generate_diagnostic_report  # lazy: avoids hard dep on ollama at startup
+
     result = await generate_diagnostic_report(
         dtc_codes=payload.get("dtc_codes", []),
         anomalies=payload.get("anomalies", []),
@@ -853,24 +1004,91 @@ async def diagnostic_report(
 
 @app.get("/sessions")
 async def sessions(user: dict = Depends(get_current_user)):
-    """List available CSV sessions for the authenticated user."""
-    csvs   = find_all_csvs()
-    result = []
-    for p in csvs[:20]:
+    """
+    List sessions for the authenticated user.
+    Queries PostgreSQL filtering by vehicles.owner_id = user.id.
+    Returns an empty list if DB is unavailable — never falls back to
+    an unscoped disk listing.
+    """
+    user_id = user.get("id")
+    if not user_id or not DATABASE_URL:
+        return {"sessions": [], "total": 0}
+
+    try:
+        conn = await get_db_connection()
         try:
-            df = load_csv(p)
-            s  = summarize_session(df, p)
-            result.append(s)
-        except Exception:
-            result.append({"filename": p.name, "error": "parse failed"})
-    return {"sessions": result, "total": len(csvs)}
+            rows = await conn.fetch(
+                """
+                SELECT s.filename, s.session_date, s.session_time,
+                       s.duration_min, s.sample_count, s.health_score,
+                       s.ltft_b1, s.stft_b1, s.vehicle_id
+                FROM sessions s
+                JOIN vehicles v ON v.vehicle_id = s.vehicle_id
+                WHERE v.owner_id = $1
+                ORDER BY s.session_date DESC, s.session_time DESC
+                LIMIT 50
+                """,
+                user_id,
+            )
+        finally:
+            await conn.close()
+        result = [
+            {
+                "filename":     r["filename"],
+                "session_date": str(r["session_date"]) if r["session_date"] else None,
+                "session_time": str(r["session_time"]) if r["session_time"] else None,
+                "duration_min": float(r["duration_min"]) if r["duration_min"] else None,
+                "sample_count": r["sample_count"],
+                "health_score": r["health_score"],
+                "ltft_b1":      float(r["ltft_b1"]) if r["ltft_b1"] is not None else None,
+                "stft_b1":      float(r["stft_b1"]) if r["stft_b1"] is not None else None,
+                "vehicle_id":   r["vehicle_id"],
+            }
+            for r in rows
+        ]
+        return {"sessions": result, "total": len(result)}
+    except Exception as exc:
+        print(f"[sessions] DB query failed: {exc}")
+        return {"sessions": [], "total": 0}
+
 
 @app.get("/sessions/{filename}")
 async def session_detail(
     filename: str,
     user: dict = Depends(get_current_user),
 ):
-    """Full insights for a specific session by filename."""
+    """
+    Full insights for a specific session.
+    Verifies the session belongs to the authenticated user before reading
+    from disk — returns 404 if not found or not owned (no 403 to avoid
+    information disclosure).
+    """
+    user_id = user.get("id")
+
+    # Ownership check via DB before touching the filesystem
+    if user_id and DATABASE_URL:
+        try:
+            conn = await get_db_connection()
+            try:
+                owned = await conn.fetchval(
+                    """
+                    SELECT s.filename
+                    FROM sessions s
+                    JOIN vehicles v ON v.vehicle_id = s.vehicle_id
+                    WHERE s.filename = $1 AND v.owner_id = $2
+                    """,
+                    filename,
+                    user_id,
+                )
+            finally:
+                await conn.close()
+            if owned is None:
+                raise HTTPException(404, f"Session not found: {filename!r}")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(503, f"Ownership check unavailable: {exc}")
+
     return await insights(session=filename, user=user)
 
 
@@ -882,8 +1100,15 @@ async def upload_csv(
     """
     Accept a CSV upload, run full trip analysis, return dashboard JSON.
     """
-    if not file.filename.endswith(".csv"):
+    if not file.filename or not file.filename.endswith(".csv"):
         raise HTTPException(400, "Only .csv files are accepted.")
+
+    # Reject filenames that contain directory separators or unsafe characters.
+    # path traversal attempt: "../../etc/cron.d/evil.csv" → rejected (not just stripped)
+    safe_name = Path(file.filename).name
+    if safe_name != file.filename or not re.match(r'^[\w\-\.]+\.csv$', safe_name):
+        raise HTTPException(400, "Filename contains invalid characters.")
+
     contents = await file.read()
     try:
         df = pd.read_csv(io.BytesIO(contents), parse_dates=["timestamp"])
@@ -894,16 +1119,27 @@ async def upload_csv(
         raise HTTPException(422, "CSV has too few rows to analyse.")
 
     # Save CSV to disk so Ollama analysis and /sessions endpoints can find it
-    csv_path = CSV_DIR / file.filename
+    csv_path = CSV_DIR / safe_name
     csv_path.write_bytes(contents)
 
-    report = _compute_trip_report(df, file.filename)
+    report  = _compute_trip_report(df, safe_name)
+    summary = summarize_session(df, Path(safe_name))
+    alerts  = detect_anomalies(df)
+
+    try:
+        from ml.pipeline.anomaly import run_isolation_forest as _run_if
+        _anomaly_result = _run_if(df)
+    except Exception:
+        _anomaly_result = None
 
     # Persist to DB and cold storage (fire-and-forget)
-    summary = summarize_session(df, Path(file.filename))
-    alerts  = detect_anomalies(df)
-    asyncio.create_task(_persist_session(summary, alerts, report["health_score"]))
-    asyncio.create_task(archive_csv(file.filename, contents))
+    asyncio.create_task(_persist_session(
+        summary, alerts, report["health_score"],
+        user_id=user.get("id"),
+        df=df,
+        anomaly_result=_anomaly_result,
+    ))
+    asyncio.create_task(archive_csv(safe_name, contents))
 
     return report
 
@@ -923,11 +1159,11 @@ async def web_app():
 # ── entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print(f"\n{'='*55}")
-    print(f"  Acty Mobile API")
+    print("  Acty Mobile API")
     print(f"  CSV dir : {CSV_DIR}")
     print(f"  Serving : http://{HOST}:{PORT}")
-    print(f"\n  On your phone (same WiFi):")
-    print(f"  Run: python3 -c \"import socket; print(socket.gethostbyname(socket.gethostname()))\"")
+    print("\n  On your phone (same WiFi):")
+    print("  Run: python3 -c \"import socket; print(socket.gethostbyname(socket.gethostname()))\"")
     print(f"  Then open: http://<your-ip>:{PORT}/insights")
     print(f"{'='*55}\n")
     uvicorn.run(app, host=HOST, port=PORT)

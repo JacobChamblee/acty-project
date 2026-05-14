@@ -3,16 +3,38 @@ rag_server.py — lightweight FastAPI wrapper around retriever.py
 Runs on the 4U at port 8766, called by Acty's main backend
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from retriever import retrieve, build_context
 import uvicorn
 import httpx
 
+import os
+import secrets
+
 app = FastAPI(title="Acty RAG Server")
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.1:8b"
+_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_URL   = f"{_OLLAMA_HOST}/api/generate"
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+
+# Internal shared secret — must be set via env on both caller and this server.
+# Callers (acty-api backend) send this in X-Internal-Token header.
+_RAG_INTERNAL_TOKEN = os.environ.get("RAG_INTERNAL_TOKEN", "")
+
+
+def _require_internal_token(x_internal_token: str | None = Header(default=None)) -> None:
+    """Dependency: reject requests that don't present the correct internal token."""
+    if not _RAG_INTERNAL_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="RAG_INTERNAL_TOKEN is not configured on this server.",
+        )
+    if not x_internal_token or not secrets.compare_digest(
+        x_internal_token, _RAG_INTERNAL_TOKEN
+    ):
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Internal-Token")
+
 
 class QueryRequest(BaseModel):
     query: str
@@ -31,7 +53,7 @@ def health():
     return {"status": "ok"}
 
 @app.post("/retrieve")
-def retrieve_chunks(req: QueryRequest):
+def retrieve_chunks(req: QueryRequest, _: None = Depends(_require_internal_token)):
     try:
         results = retrieve(req.query, top_k=req.top_k)
         return {"chunks": results}
@@ -39,7 +61,7 @@ def retrieve_chunks(req: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/context")
-def get_context(req: ContextRequest):
+def get_context(req: ContextRequest, _: None = Depends(_require_internal_token)):
     try:
         context = build_context(req.query)
         return {"context": context}
@@ -47,11 +69,24 @@ def get_context(req: ContextRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/query")
-def query(req: AskRequest):
+def query(req: AskRequest, _: None = Depends(_require_internal_token)):
+    # Validate query length before hitting the embedding model
+    if not req.query or not req.query.strip():
+        raise HTTPException(status_code=422, detail="Query must not be empty.")
+    if len(req.query) > 2000:
+        raise HTTPException(status_code=422, detail="Query exceeds 2000-character limit.")
+
     try:
         chunks = retrieve(req.query, top_k=req.top_k)
+
+        # No results is a valid outcome — return 200 with empty answer rather than 404.
+        # 404 caused callers to treat it as a server error instead of a graceful degradation.
         if not chunks:
-            raise HTTPException(status_code=404, detail="No relevant chunks found.")
+            return {
+                "answer": "",
+                "no_results_found": True,
+                "sources": [],
+            }
 
         context = "\n\n---\n\n".join(
             f"[{c['source']} p.{c['page']}]\n{c['text']}" for c in chunks
@@ -76,6 +111,7 @@ def query(req: AskRequest):
 
         return {
             "answer": answer,
+            "no_results_found": False,
             "sources": [
                 {"source": c["source"], "page": c["page"], "distance": c["distance"]}
                 for c in chunks
